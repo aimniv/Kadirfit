@@ -124,10 +124,14 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   const wishlistProducts = products.filter(p => wishlist.includes(p.id));
 
   // Handle return request
-  const handleSubmitReturn = (e: React.FormEvent) => {
+  const handleSubmitReturn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!returnOrderId || !returnReason) return;
-    requestOrderReturn(returnOrderId, returnReason);
+    const res = await requestOrderReturn(returnOrderId, returnReason);
+    if (!res.success) {
+      notify(res.message, 'error');
+      return;
+    }
     setReturnSuccess(true);
     setTimeout(() => {
       setReturnSuccess(false);

@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR } from './config.js';
 import { randomToken, sha256 } from './security.js';
-import type { Product } from '../src/types/index.js';
-import { normalizeEmail, type RateResult, type Store, type StoredUser, type TokenType } from './store.js';
+import type { Coupon, Order, Product } from '../src/types/index.js';
+import { normalizeEmail, type PlaceOrderResult, type RateResult, type Store, type StoredUser, type TokenType } from './store.js';
 
 /**
  * Local-development store: a JSON file plus an in-memory rate limiter.
@@ -23,9 +23,14 @@ interface Db {
   products: Product[];
   productsSeeded: boolean;
   images: Record<string, { mime: string; data: string }>;
+  orders: Order[];
+  coupons: Coupon[];
+  couponsSeeded: boolean;
 }
 
-const emptyDb = (): Db => ({ users: [], tokens: [], products: [], productsSeeded: false, images: {} });
+const emptyDb = (): Db => ({
+  users: [], tokens: [], products: [], productsSeeded: false, images: {}, orders: [], coupons: [], couponsSeeded: false
+});
 
 const DB_FILE = path.join(DATA_DIR, 'auth.json');
 
@@ -164,5 +169,89 @@ export class JsonStore implements Store {
   async getImage(id: string) {
     const img = this.db.images[id];
     return img ? { mime: img.mime, data: Buffer.from(img.data, 'base64') } : undefined;
+  }
+
+  async adjustStock(productId: string, delta: number) {
+    const p = this.db.products.find(x => x.id === productId);
+    if (!p) return;
+    p.stock = Math.max(0, p.stock + delta);
+    this.persist();
+  }
+
+  async listOrders() {
+    return [...this.db.orders].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async listOrdersForCustomer(userId: string, email: string) {
+    const e = normalizeEmail(email);
+    return (await this.listOrders()).filter(o => o.userId === userId || (o.customerEmail && normalizeEmail(o.customerEmail) === e));
+  }
+
+  async getOrder(id: string) {
+    return this.db.orders.find(o => o.id === id);
+  }
+
+  async updateOrder(id: string, patch: Partial<Order>) {
+    const order = this.db.orders.find(o => o.id === id);
+    if (!order) return undefined;
+    Object.assign(order, patch);
+    this.persist();
+    return order;
+  }
+
+  async placeOrder(order: Order, stock: Array<{ productId: string; quantity: number }>, couponId?: string): Promise<PlaceOrderResult> {
+    if (this.db.orders.some(o => o.orderNumber === order.orderNumber)) return { ok: false, reason: 'number' };
+    for (const { productId, quantity } of stock) {
+      const p = this.db.products.find(x => x.id === productId);
+      if (!p || p.stock < quantity) return { ok: false, reason: 'stock', productId };
+    }
+    const coupon = couponId ? this.db.coupons.find(c => c.id === couponId) : undefined;
+    if (couponId && (!coupon || !coupon.isActive || coupon.usageCount >= coupon.usageLimit)) return { ok: false, reason: 'coupon' };
+    for (const { productId, quantity } of stock) this.db.products.find(x => x.id === productId)!.stock -= quantity;
+    if (coupon) coupon.usageCount += 1;
+    this.db.orders.push(order);
+    this.persist();
+    return { ok: true };
+  }
+
+  async listCoupons() {
+    return [...this.db.coupons].reverse();
+  }
+
+  async getCouponByCode(code: string) {
+    return this.db.coupons.find(c => c.code.toUpperCase() === code.toUpperCase());
+  }
+
+  async getCoupon(id: string) {
+    return this.db.coupons.find(c => c.id === id);
+  }
+
+  async insertCoupon(coupon: Coupon) {
+    if (await this.getCouponByCode(coupon.code)) return false;
+    this.db.coupons.push(coupon);
+    this.persist();
+    return true;
+  }
+
+  async updateCoupon(id: string, patch: Partial<Coupon>) {
+    const c = this.db.coupons.find(x => x.id === id);
+    if (!c) return undefined;
+    Object.assign(c, patch);
+    this.persist();
+    return c;
+  }
+
+  async removeCoupon(id: string) {
+    const before = this.db.coupons.length;
+    this.db.coupons = this.db.coupons.filter(c => c.id !== id);
+    this.persist();
+    return this.db.coupons.length < before;
+  }
+
+  async seedCoupons(coupons: Coupon[]) {
+    if (this.db.couponsSeeded) return;
+    this.db.couponsSeeded = true;
+    this.db.coupons = [...coupons];
+    this.persist();
   }
 }

@@ -1,5 +1,7 @@
 import nodemailer from 'nodemailer';
+import type { Order } from '../src/types/index.js';
 import { APP_URL, SMTP, isProd } from './config.js';
+import { paymentOptions } from './shop.js';
 
 const smtpConfigured = Boolean(SMTP.host);
 
@@ -92,4 +94,42 @@ export function sendPasswordResetEmail(to: string, firstName: string, token: str
   );
   const text = `Merhaba ${firstName},\n\nŞifrenizi sıfırlamak için bağlantıya tıklayın (1 saat geçerli, tek kullanımlık):\n${link}\n\nBu talebi siz yapmadıysanız bu e-postayı yok sayın.`;
   return deliver(to, 'Kadirfit — Şifre sıfırlama', html, text, link);
+}
+
+const TRY = (n: number) => `${n.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺`;
+
+/** Order confirmation to the customer, plus a heads-up to the shop owner when ORDER_NOTIFY_EMAIL is set. */
+export async function sendOrderEmails(order: Order): Promise<void> {
+  const link = `${APP_URL}/`;
+  const rows = order.items
+    .map(i => `<tr><td style="padding:4px 0;color:#EDEDED">${escapeHtml(i.title)}${i.selectedVariantText ? `<br><span style="color:#7A7A7A;font-size:12px">${escapeHtml(i.selectedVariantText)}</span>` : ''}</td><td style="padding:4px 0 4px 12px;text-align:right;color:#EDEDED;white-space:nowrap">${i.quantity} × ${TRY(i.unitPrice)}</td></tr>`)
+    .join('');
+  const paymentNote =
+    order.paymentMethod === 'bank_transfer'
+      ? `<br><br><strong>Havale / EFT:</strong> Lütfen açıklama kısmına <strong>${escapeHtml(order.orderNumber)}</strong> yazarak tutarı aşağıdaki hesaba gönderin:<br>${paymentOptions().bankTransferDetails.map(escapeHtml).join('<br>')}`
+      : order.paymentMethod === 'cash_on_delivery'
+      ? '<br><br><strong>Kapıda ödeme:</strong> Tutarı kargo tesliminde ödeyeceksiniz.'
+      : '';
+  const body = `Merhaba ${escapeHtml(order.customerName)},<br>Siparişiniz alındı. Sipariş numaranız: <strong>${escapeHtml(order.orderNumber)}</strong><br><br>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:13px">${rows}
+    <tr><td colspan="2" style="padding-top:8px;border-top:1px solid #262626"></td></tr>
+    ${order.discountAmount ? `<tr><td style="color:#9A9A9A">İndirim (${escapeHtml(order.couponCode ?? '')})</td><td style="text-align:right;color:#9A9A9A">-${TRY(order.discountAmount)}</td></tr>` : ''}
+    <tr><td style="color:#9A9A9A">Kargo</td><td style="text-align:right;color:#9A9A9A">${order.shippingFee ? TRY(order.shippingFee) : 'Ücretsiz'}</td></tr>
+    ${order.paymentFee ? `<tr><td style="color:#9A9A9A">Kapıda ödeme bedeli</td><td style="text-align:right;color:#9A9A9A">${TRY(order.paymentFee)}</td></tr>` : ''}
+    <tr><td style="color:#fff;font-weight:700;padding-top:6px">Toplam</td><td style="text-align:right;color:#FF5A1F;font-weight:700;padding-top:6px">${TRY(order.total)}</td></tr></table>${paymentNote}`;
+  const html = layout('Siparişiniz alındı', body, 'Hesabıma Git', link, 'Sipariş durumunuzu hesabınızdaki "Siparişlerim" bölümünden takip edebilirsiniz.');
+  const textBody = `Siparişiniz alındı. Sipariş no: ${order.orderNumber}\nToplam: ${TRY(order.total)}\n${link}`;
+  await deliver(order.customerEmail, `Kadirfit — Siparişiniz alındı (${order.orderNumber})`, html, textBody, link);
+
+  const notify = process.env.ORDER_NOTIFY_EMAIL;
+  if (notify) {
+    const adminHtml = layout(
+      'Yeni sipariş',
+      `<strong>${escapeHtml(order.orderNumber)}</strong> — ${escapeHtml(order.customerName)} (${escapeHtml(order.customerEmail)})<br>Toplam: <strong>${TRY(order.total)}</strong> · ${escapeHtml(order.paymentMethod)}`,
+      'Admin Paneli',
+      link,
+      'Siparişi yönetim panelinden görüntüleyebilirsiniz.'
+    );
+    await deliver(notify, `Yeni sipariş ${order.orderNumber} — ${TRY(order.total)}`, adminHtml, `Yeni sipariş ${order.orderNumber}: ${TRY(order.total)}`, link);
+  }
 }

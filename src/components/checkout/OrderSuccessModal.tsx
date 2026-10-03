@@ -1,6 +1,7 @@
 import React from 'react';
 import { CheckCircle2, PackageCheck, Mail, ArrowRight, Download, FileText } from 'lucide-react';
 import { Order } from '../../types';
+import { useApp } from '../../context/AppContext';
 
 interface OrderSuccessModalProps {
   order: Order | null;
@@ -13,6 +14,7 @@ export const OrderSuccessModal: React.FC<OrderSuccessModalProps> = ({
   onClose,
   onNavigateToAccount
 }) => {
+  const { shopConfig } = useApp();
   if (!order) return null;
 
   const hasCoaching = order.items.some(i => i.isCoaching);
@@ -28,7 +30,7 @@ export const OrderSuccessModal: React.FC<OrderSuccessModalProps> = ({
 
         <div>
           <span className="text-xs font-bold text-[#FF5A1F] uppercase tracking-widest block mb-1">
-            ÖDEME ONAYLANDI
+            SİPARİŞ ALINDI
           </span>
           <h2 className="font-display text-3xl sm:text-4xl font-black text-white uppercase tracking-tight">
             TEBRİKLER, SİPARİŞİNİZ ALINDI!
@@ -42,10 +44,10 @@ export const OrderSuccessModal: React.FC<OrderSuccessModalProps> = ({
         <div className="p-4 rounded-xl bg-neutral-900/80 border border-neutral-800 text-left text-xs space-y-2">
           <div className="flex items-center gap-2 text-[#FF5A1F] font-bold">
             <Mail className="w-4 h-4" />
-            <span>Otomatik E-Posta Gönderildi</span>
+            <span>Onay E-Postası Gönderildi</span>
           </div>
           <p className="text-neutral-300">
-            Sipariş onayınız ve faturanız <strong>{order.customerEmail}</strong> adresinize başarıyla iletilmiştir.
+            Sipariş onayınız <strong>{order.customerEmail}</strong> adresine gönderildi. Gelmediyse spam klasörünü kontrol edin.
           </p>
         </div>
 
@@ -63,9 +65,25 @@ export const OrderSuccessModal: React.FC<OrderSuccessModalProps> = ({
 
           <div className="flex justify-between items-center">
             <span className="text-neutral-400">Ödeme Şekli:</span>
-            <span className="text-neutral-200 uppercase font-semibold">{order.paymentMethod.replace('_', ' ')}</span>
+            <span className="text-neutral-200 font-semibold">
+              {{ credit_card: 'Kredi / Banka Kartı', bank_transfer: 'Havale / EFT', cash_on_delivery: 'Kapıda Ödeme' }[order.paymentMethod]}
+            </span>
           </div>
         </div>
+
+        {order.paymentMethod === 'bank_transfer' && shopConfig.bankTransferDetails.length > 0 && (
+          <div className="p-4 rounded-xl bg-[#FF5A1F]/10 border border-[#FF5A1F]/30 text-left text-xs space-y-2">
+            <p className="text-neutral-200">
+              Siparişinizin hazırlanması için tutarı aşağıdaki hesaba gönderin ve açıklama kısmına <strong>{order.orderNumber}</strong> yazın:
+            </p>
+            {shopConfig.bankTransferDetails.map(line => (
+              <p key={line} className="font-mono text-white font-bold text-[11px]">{line}</p>
+            ))}
+          </div>
+        )}
+        {order.paymentMethod === 'cash_on_delivery' && (
+          <p className="text-xs text-neutral-400">Tutarı kargo tesliminde ödeyeceksiniz.</p>
+        )}
 
         {/* Action Buttons */}
         <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">

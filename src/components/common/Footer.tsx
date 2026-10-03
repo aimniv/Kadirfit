@@ -30,7 +30,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
             </div>
             <div>
               <h4 className="font-bold text-white text-sm">256-Bit SSL Güvenli Ödeme</h4>
-              <p className="text-neutral-400 text-[11px]">iyzico & PayTR altyapısı ile 3D Secure koruma</p>
+              <p className="text-neutral-400 text-[11px]">Tüm verileriniz SSL ile şifrelenir</p>
             </div>
           </div>
 
@@ -244,13 +244,10 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
             © {new Date().getFullYear()} Kadirfit Spor A.Ş. Tüm hakları saklıdır. "Kadirfit" tescilli bir markadır.
           </p>
 
-          {/* Payment Trust Logos */}
+          {/* Payment methods that are really available */}
           <div className="flex items-center gap-3 text-neutral-400 text-[10px] font-semibold">
-            <span className="px-2 py-1 bg-neutral-900 border border-neutral-800 rounded">VISA</span>
-            <span className="px-2 py-1 bg-neutral-900 border border-neutral-800 rounded">Mastercard</span>
-            <span className="px-2 py-1 bg-neutral-900 border border-neutral-800 rounded">TROY</span>
-            <span className="px-2 py-1 bg-neutral-900 border border-neutral-800 rounded text-emerald-400">3D Secure</span>
-            <span className="px-2 py-1 bg-neutral-900 border border-neutral-800 rounded">iyzico</span>
+            <span className="px-2 py-1 bg-neutral-900 border border-neutral-800 rounded">Havale / EFT</span>
+            <span className="px-2 py-1 bg-neutral-900 border border-neutral-800 rounded">Kapıda Ödeme</span>
           </div>
         </div>
       </div>

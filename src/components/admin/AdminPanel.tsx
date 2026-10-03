@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { ProductFormModal } from './ProductFormModal';
+import { OrderDetailModal } from './OrderDetailModal';
 import { useDialog } from '../../context/DialogContext';
 import { Role, OrderStatus, Product, CoachingPackage, Coupon, BlogPost, TransformationStory } from '../../types';
 
@@ -66,6 +67,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
     deleteProduct,
     orders,
     updateOrderStatus,
+    updateOrderPayment,
     users,
     updateUserStatus,
     coachingPackages,
@@ -76,6 +78,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
     addCoachNotesToCheckIn,
     coupons,
     addCoupon,
+    toggleCoupon,
     deleteCoupon,
     blogPosts,
     addBlogPost,
@@ -91,6 +94,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
   const { confirm, form, notify } = useDialog();
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   // `undefined` = form closed, `null` = creating a new product, otherwise editing that product
+  const [openOrderId, setOpenOrderId] = useState<string | null>(null);
   const [productForm, setProductForm] = useState<Product | null | undefined>(undefined);
 
   // Guard: if current user is not logged in or role is USER, display authorization error
@@ -641,13 +645,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
                   <tbody className="divide-y divide-neutral-800/80 text-neutral-300">
                     {orders.map((ord) => (
                       <tr key={ord.id} className="hover:bg-neutral-900/40">
-                        <td className="p-3.5 font-mono font-bold text-white">{ord.orderNumber}</td>
+                        <td className="p-3.5">
+                          <button onClick={() => setOpenOrderId(ord.id)} className="font-mono font-bold text-white underline decoration-dotted hover:text-[#FF5A1F]" title="Sipariş detayı">
+                            {ord.orderNumber}
+                          </button>
+                          {ord.returnRequested && ord.status !== 'İptal / İade' && (
+                            <span className="ml-2 px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 text-[9px] font-bold">İADE TALEBİ</span>
+                          )}
+                        </td>
                         <td className="p-3.5">
                           <span className="font-semibold text-white block">{ord.customerName}</span>
                           <span className="text-[10px] text-neutral-400">{ord.customerEmail}</span>
                         </td>
                         <td className="p-3.5 font-bold text-[#FF5A1F]">{ord.total.toLocaleString('tr-TR')} ₺</td>
-                        <td className="p-3.5 capitalize font-mono text-[11px]">{ord.paymentMethod.replace('_', ' ')}</td>
+                        <td className="p-3.5 text-[11px]">
+                          <span className="block text-neutral-300">{{ credit_card: 'Kart', bank_transfer: 'Havale / EFT', cash_on_delivery: 'Kapıda ödeme' }[ord.paymentMethod]}</span>
+                          <span className={ord.paymentStatus === 'paid' ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}>
+                            {ord.paymentStatus === 'paid' ? 'Ödendi' : 'Bekliyor'}
+                          </span>
+                        </td>
                         <td className="p-3.5">
                           <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-neutral-800 text-white">
                             {ord.status}
@@ -665,7 +681,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
                                   fields: [{ name: 'tracking', label: 'Takip No (Yurtiçi Kargo)', placeholder: 'YK1234567890' }],
                                   submitLabel: 'Kargoya Ver'
                                 });
-                                if (v) updateOrderStatus(ord.id, 'Kargoda', v.tracking, 'Yurtiçi Kargo');
+                                if (!v) return;
+                                const res = await updateOrderStatus(ord.id, 'Kargoda', v.tracking, 'Yurtiçi Kargo');
+                                notify(res.success ? 'Sipariş kargoya verildi.' : res.message, res.success ? 'success' : 'error');
                               }}
                               className="text-[#FF5A1F] underline text-[11px]"
                             >
@@ -676,7 +694,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
                         <td className="p-3.5 text-right">
                           <select
                             value={ord.status}
-                            onChange={(e) => updateOrderStatus(ord.id, e.target.value as OrderStatus)}
+                            onChange={async (e) => {
+                              const res = await updateOrderStatus(ord.id, e.target.value as OrderStatus);
+                              if (!res.success) notify(res.message, 'error');
+                            }}
                             className="bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-[11px] text-white"
                           >
                             <option value="Beklemede">Beklemede</option>
@@ -900,18 +921,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
                       notify('İndirim değeri geçersiz.', 'error');
                       return;
                     }
-                    addCoupon({
-                      id: `coup-${Date.now()}`,
+                    const res = await addCoupon({
                       code: v.code.toUpperCase().replace(/\s+/g, ''),
                       type,
                       value,
-                      minCartAmount: Math.max(0, Number(v.minCartAmount) || 0),
-                      expiresAt: '2027-12-31',
-                      usageCount: 0,
-                      usageLimit: 500,
-                      isActive: true
+                      minCartAmount: Math.max(0, Number(v.minCartAmount) || 0)
                     });
-                    notify('Kupon oluşturuldu.', 'success');
+                    notify(res.success ? 'Kupon oluşturuldu ve hemen geçerli.' : res.message, res.success ? 'success' : 'error');
                   }}
                   className="px-3.5 py-1.5 bg-[#FF5A1F] hover:bg-[#e04e18] text-white text-xs font-bold rounded flex items-center gap-1.5"
                 >
@@ -928,14 +944,38 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
                       <p className="text-xs text-neutral-300">
                         {c.type === 'percentage' ? `%${c.value} İndirim` : `${c.value} TL İndirim`}
                       </p>
-                      <span className="text-[10px] text-neutral-500">Min. {c.minCartAmount} TL Sepet</span>
+                      <span className="text-[10px] text-neutral-500 block">Min. {c.minCartAmount} TL Sepet · Kullanım {c.usageCount}/{c.usageLimit}</span>
+                      <span className="text-[10px] text-neutral-600">Son tarih: {c.expiresAt}</span>
                     </div>
-                    <button
-                      onClick={() => deleteCoupon(c.id)}
-                      className="p-2 text-neutral-500 hover:text-rose-400"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={async () => {
+                          const res = await toggleCoupon(c.id, !c.isActive);
+                          if (!res.success) notify(res.message, 'error');
+                        }}
+                        className={`px-2.5 py-1 rounded text-[10px] font-bold ${c.isActive ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20' : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700'}`}
+                        title={c.isActive ? 'Kuponu kapat' : 'Kuponu aç'}
+                      >
+                        {c.isActive ? 'AKTİF' : 'KAPALI'}
+                      </button>
+                      <button
+                        onClick={async () => {
+                          const ok = await confirm({
+                            title: 'Kuponu sil',
+                            message: `"${c.code}" kuponu kalıcı olarak silinecek.`,
+                            confirmLabel: 'Kuponu Sil',
+                            danger: true
+                          });
+                          if (!ok) return;
+                          const res = await deleteCoupon(c.id);
+                          if (!res.success) notify(res.message, 'error');
+                        }}
+                        className="p-2 text-neutral-500 hover:text-rose-400"
+                        title="Kuponu sil"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1165,6 +1205,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
 
         </div>
       </main>
+
+      {openOrderId && orders.find(o => o.id === openOrderId) && (
+        <OrderDetailModal
+          order={orders.find(o => o.id === openOrderId)!}
+          onClose={() => setOpenOrderId(null)}
+          onTogglePaid={async (o) => {
+            const res = await updateOrderPayment(o.id, o.paymentStatus === 'paid' ? 'pending' : 'paid');
+            if (!res.success) notify(res.message, 'error');
+          }}
+        />
+      )}
 
       {productForm !== undefined && (
         <ProductFormModal product={productForm} onClose={() => setProductForm(undefined)} />
