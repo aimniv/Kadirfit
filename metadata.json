@@ -1,0 +1,6 @@
+{
+  "name": "Kadirfit - Online Fitness & Beslenme Koçluğu ve Spor Mağazası",
+  "description": "Kadirfit ile gücünü ve disiplinini keşfet. Kişiye özel online fitness ve beslenme koçluğu, premium fitness giyim, protein tozu ve sporcu takviyeleri.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
