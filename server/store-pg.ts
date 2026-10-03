@@ -1,7 +1,7 @@
 import pg from 'pg';
 import { DATABASE_SSL_NO_VERIFY, DATABASE_URL } from './config.js';
 import { randomToken, sha256 } from './security.js';
-import type { Coupon, Order, Product } from '../src/types/index.js';
+import type { AssessmentForm, CheckIn, Coupon, Order, Product } from '../src/types/index.js';
 import { normalizeEmail, type PlaceOrderResult, type RateResult, type Store, type StoredUser, type TokenType } from './store.js';
 
 /**
@@ -55,7 +55,31 @@ const SCHEMA = [
      code text NOT NULL UNIQUE,
      data jsonb NOT NULL,
      created_at timestamptz NOT NULL DEFAULT now()
-   )`
+   )`,
+  `CREATE TABLE IF NOT EXISTS kf_content (
+     key text PRIMARY KEY,
+     data jsonb NOT NULL,
+     updated_at timestamptz NOT NULL DEFAULT now()
+   )`,
+  `CREATE TABLE IF NOT EXISTS kf_subscribers (
+     email text PRIMARY KEY,
+     created_at timestamptz NOT NULL DEFAULT now()
+   )`,
+  `CREATE TABLE IF NOT EXISTS kf_assessments (
+     id text PRIMARY KEY,
+     user_id text NOT NULL,
+     user_email text NOT NULL,
+     data jsonb NOT NULL,
+     created_at timestamptz NOT NULL DEFAULT now()
+   )`,
+  `CREATE INDEX IF NOT EXISTS kf_assessments_user_idx ON kf_assessments (user_id)`,
+  `CREATE TABLE IF NOT EXISTS kf_checkins (
+     id text PRIMARY KEY,
+     user_id text NOT NULL,
+     data jsonb NOT NULL,
+     created_at timestamptz NOT NULL DEFAULT now()
+   )`,
+  `CREATE INDEX IF NOT EXISTS kf_checkins_user_idx ON kf_checkins (user_id)`
 ];
 
 const toUser = (row: { data: StoredUser } | undefined) => row?.data;
@@ -315,5 +339,97 @@ export class PgStore implements Store {
     const claimed = await this.pool.query("INSERT INTO kf_meta (key) VALUES ('coupons_seeded') ON CONFLICT DO NOTHING");
     if (claimed.rowCount !== 1) return;
     for (const c of coupons) await this.insertCoupon(c);
+  }
+
+  async getContent(key: string) {
+    const { rows } = await this.pool.query('SELECT data FROM kf_content WHERE key = $1', [key]);
+    return rows[0]?.data as unknown;
+  }
+
+  async setContent(key: string, data: unknown) {
+    await this.pool.query(
+      `INSERT INTO kf_content (key, data) VALUES ($1, $2)
+       ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
+      [key, JSON.stringify(data)]
+    );
+  }
+
+  async listContent() {
+    const { rows } = await this.pool.query('SELECT key, data FROM kf_content');
+    return Object.fromEntries(rows.map(r => [r.key as string, r.data as unknown]));
+  }
+
+  async addSubscriber(email: string) {
+    const { rowCount } = await this.pool.query('INSERT INTO kf_subscribers (email) VALUES ($1) ON CONFLICT DO NOTHING', [normalizeEmail(email)]);
+    return rowCount === 1;
+  }
+
+  async listSubscribers() {
+    const { rows } = await this.pool.query('SELECT email FROM kf_subscribers ORDER BY created_at DESC');
+    return rows.map(r => r.email as string);
+  }
+
+  async listUsers() {
+    const { rows } = await this.pool.query("SELECT data FROM kf_users ORDER BY data->>'createdAt' DESC");
+    return rows.map(r => r.data as StoredUser);
+  }
+
+  async saveAssessment(a: AssessmentForm) {
+    await this.pool.query(
+      `INSERT INTO kf_assessments (id, user_id, user_email, data) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data`,
+      [a.id, a.userId, normalizeEmail(a.userEmail || ''), JSON.stringify(a)]
+    );
+  }
+
+  async getAssessment(id: string) {
+    const { rows } = await this.pool.query('SELECT data FROM kf_assessments WHERE id = $1', [id]);
+    return rows[0]?.data as AssessmentForm | undefined;
+  }
+
+  async updateAssessment(id: string, patch: Partial<AssessmentForm>) {
+    const { rows } = await this.pool.query('UPDATE kf_assessments SET data = data || $2::jsonb WHERE id = $1 RETURNING data', [id, JSON.stringify(patch)]);
+    return rows[0]?.data as AssessmentForm | undefined;
+  }
+
+  async listAssessments() {
+    const { rows } = await this.pool.query('SELECT data FROM kf_assessments ORDER BY created_at DESC');
+    return rows.map(r => r.data as AssessmentForm);
+  }
+
+  async listAssessmentsFor(userId: string, email: string) {
+    const { rows } = await this.pool.query(
+      'SELECT data FROM kf_assessments WHERE user_id = $1 OR user_email = $2 ORDER BY created_at DESC',
+      [userId, normalizeEmail(email)]
+    );
+    return rows.map(r => r.data as AssessmentForm);
+  }
+
+  async saveCheckIn(c: CheckIn) {
+    await this.pool.query(
+      `INSERT INTO kf_checkins (id, user_id, data) VALUES ($1, $2, $3)
+       ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data`,
+      [c.id, c.userId, JSON.stringify(c)]
+    );
+  }
+
+  async getCheckIn(id: string) {
+    const { rows } = await this.pool.query('SELECT data FROM kf_checkins WHERE id = $1', [id]);
+    return rows[0]?.data as CheckIn | undefined;
+  }
+
+  async updateCheckIn(id: string, patch: Partial<CheckIn>) {
+    const { rows } = await this.pool.query('UPDATE kf_checkins SET data = data || $2::jsonb WHERE id = $1 RETURNING data', [id, JSON.stringify(patch)]);
+    return rows[0]?.data as CheckIn | undefined;
+  }
+
+  async listCheckIns() {
+    const { rows } = await this.pool.query('SELECT data FROM kf_checkins ORDER BY created_at DESC');
+    return rows.map(r => r.data as CheckIn);
+  }
+
+  async listCheckInsFor(userId: string) {
+    const { rows } = await this.pool.query('SELECT data FROM kf_checkins WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
+    return rows.map(r => r.data as CheckIn);
   }
 }

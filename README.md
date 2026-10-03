@@ -32,7 +32,7 @@ Sitedeki tüm içerikler, ürünler, siparişler, öğrenci check-in takipleri v
 - **WhatsApp Butonu**: Sağ altta sabit, özel mesaj şablonlu hızlı iletişim butonu.
 
 ### 3. Mağaza & Ödeme (E-Ticaret)
-> **Durum:** Siparişler ve kuponlar sunucuda (PostgreSQL) tutulur. Fiyat, kargo, indirim ve stok **sunucuda** hesaplanır; tarayıcıdan gelen tutarlara güvenilmez. **Kredi kartı ödemesi şu an kapalıdır** (iyzico/PayTR hesabı ve API anahtarları gerekir); aktif yöntemler Kapıda Ödeme ve (banka bilgisi tanımlıysa) Havale/EFT'tir.
+> **Durum:** Siparişler, kuponlar, ürünler, üyeler, koçluk formları, check-in'ler, bülten aboneleri ve site içeriği (ayarlar, bölümler, blog, yorumlar, koçluk paket fiyatları) sunucuda (PostgreSQL) tutulur. Yalnızca sepet, favoriler ve dil tercihi ziyaretçinin tarayıcısında kalır. Fiyat, kargo, indirim ve stok **sunucuda** hesaplanır; tarayıcıdan gelen tutarlara güvenilmez. **Kredi kartı ödemesi şu an kapalıdır** (iyzico/PayTR hesabı ve API anahtarları gerekir); aktif yöntemler Kapıda Ödeme ve (banka bilgisi tanımlıysa) Havale/EFT'tir.
 
 - **Filtreler**: Kategori, alt kategori, maksimum fiyat kaydırıcısı, beden (S, M, L, XL, XXL), aroma, marka ve arama.
 - **Ürün Detay**: Zoom'lu görsel galerisi, varyant seçimi, anlık stok durumu, Beden Ölçü Tablosu, takviyelerde Besin Değerleri Tablosu ve kullanım önerisi, onaylı müşteri değerlendirmeleri.

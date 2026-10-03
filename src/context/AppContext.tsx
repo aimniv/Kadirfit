@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useCallback, useContext, useState, useEffect, useRef } from 'react';
 import {
   User,
   Product,
@@ -26,6 +26,7 @@ import {
   INITIAL_TESTIMONIALS,
   INITIAL_BLOG_POSTS
 } from '../data/initialData';
+import { contentApi, newsletterApi, assessmentsApi, checkInsApi, membersApi, ContentKey } from '../lib/communityApi';
 import { ordersApi, couponsApi, fetchShopConfig, ApiResult, PlaceOrderPayload, ShopConfig } from '../lib/shopApi';
 import { authApi, AuthResult } from '../lib/authApi';
 import { productsApi, ProductResult } from '../lib/productsApi';
@@ -73,7 +74,7 @@ interface AppContextType {
   forgotPassword: (email: string) => Promise<AuthResult>;
   resetPassword: (token: string, password: string) => Promise<AuthResult>;
   updateProfile: (data: Partial<User>) => Promise<AuthResult>;
-  updateUserStatus: (userId: string, suspended: boolean) => void;
+  updateUserStatus: (userId: string, suspended: boolean) => Promise<ApiResult>;
   deleteUser: (userId: string) => Promise<void>;
 
   // Cart
@@ -119,11 +120,11 @@ interface AppContextType {
 
   // Assessments & Check-ins
   assessments: AssessmentForm[];
-  submitAssessment: (data: Omit<AssessmentForm, 'id' | 'submittedAt' | 'reviewedByCoach'>) => void;
-  reviewAssessment: (id: string, feedback: string) => void;
+  submitAssessment: (data: Omit<AssessmentForm, 'id' | 'userId' | 'submittedAt' | 'reviewedByCoach'>) => Promise<ApiResult>;
+  reviewAssessment: (id: string, feedback: string) => Promise<ApiResult>;
   checkIns: CheckIn[];
-  submitCheckIn: (data: Omit<CheckIn, 'id' | 'date'>) => void;
-  addCoachNotesToCheckIn: (checkInId: string, notes: string) => void;
+  submitCheckIn: (data: Omit<CheckIn, 'id' | 'userId' | 'weekNumber' | 'date'>) => Promise<ApiResult>;
+  addCoachNotesToCheckIn: (checkInId: string, notes: string) => Promise<ApiResult>;
 
   // Blog & Content
   blogPosts: BlogPost[];
@@ -141,7 +142,7 @@ interface AppContextType {
   addTestimonial: (test: Testimonial) => void;
   toggleTestimonialApproval: (id: string) => void;
   newsletterSubscribers: string[];
-  subscribeNewsletter: (email: string) => { success: boolean; message: string };
+  subscribeNewsletter: (email: string) => Promise<ApiResult>;
 
   // Modals & Navigation Helpers
   searchOpen: boolean;
@@ -159,8 +160,6 @@ interface AppContextType {
   openAssessmentModal: () => void;
   closeAssessmentModal: () => void;
 
-  // Reset to initial
-  resetDemoData: () => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -184,17 +183,49 @@ const saveStorage = (key: string, value: unknown) => {
   }
 };
 
+/**
+ * State for content the owner edits in the admin panel (settings, blog, ...). It starts from the built-in defaults,
+ * is replaced by what the server has, and every local edit is saved back to the server shortly after.
+ */
+function useSharedContent<T>(key: ContentKey, initial: T, notify: (message: string, tone?: 'success' | 'error' | 'info') => void) {
+  const [value, setValue] = useState<T>(initial);
+  const dirty = useRef(false);
+
+  const update = useCallback((next: T | ((prev: T) => T)) => {
+    dirty.current = true;
+    setValue(next);
+  }, []);
+  const hydrate = useCallback((next: T) => {
+    dirty.current = false;
+    setValue(next);
+  }, []);
+
+  useEffect(() => {
+    if (!dirty.current) return;
+    const timer = setTimeout(async () => {
+      dirty.current = false;
+      const res = await contentApi.save(key, value);
+      if (!res.success) notify(`Değişiklik kaydedilemedi: ${res.message}`, 'error');
+    }, 700);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  return [value, update, hydrate] as const;
+}
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { notify } = useDialog();
   // Language
   const [language, setLanguageState] = useState<Language>(() => loadStorage('language', 'tr'));
 
   // Settings
-  const [settings, setSettings] = useState<SiteSettings>(() => loadStorage('settings', INITIAL_SETTINGS));
-  const [cmsSections, setCmsSections] = useState<CMSSection[]>(() => loadStorage('cms_sections', INITIAL_CMS_SECTIONS));
+  const [settings, setSettings, hydrateSettings] = useSharedContent<SiteSettings>('settings', INITIAL_SETTINGS, notify);
+  const [cmsSections, setCmsSections, hydrateCms] = useSharedContent<CMSSection[]>('cms_sections', INITIAL_CMS_SECTIONS, notify);
 
   // Users & Auth
-  const [users, setUsers] = useState<User[]>(() => loadStorage('users', INITIAL_USERS));
+  // Member list (owner only), loaded from the server.
+  const [users, setUsers] = useState<User[]>([]);
   // The signed-in user comes from the server session (httpOnly cookie), never from localStorage.
   const [currentUser, setCurrentUser] = useState<User | null>(null);
 
@@ -209,7 +240,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Products & Coaching
   // The catalogue lives on the server; the built-in list only shows until it loads (or if the server is unreachable).
   const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
-  const [coachingPackages, setCoachingPackages] = useState<CoachingPackage[]>(() => loadStorage('coaching_packages', INITIAL_COACHING_PACKAGES));
+  const [coachingPackages, setCoachingPackages, hydratePackages] = useSharedContent<CoachingPackage[]>('coaching_packages', INITIAL_COACHING_PACKAGES, notify);
 
   // Orders
   // Orders and coupons live on the server; staff see all orders, customers only their own.
@@ -217,73 +248,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [shopConfig, setShopConfig] = useState<ShopConfig>({ methods: ['cash_on_delivery'], bankTransferDetails: [] });
 
   // Assessments & Check-ins
-  const [assessments, setAssessments] = useState<AssessmentForm[]>(() => loadStorage('assessments', [
-    {
-      id: 'asmt-1',
-      userId: 'user-demo-1',
-      userEmail: 'kullanici@kadirfit.com',
-      fullName: 'Emre Demir',
-      age: 26,
-      gender: 'erkek',
-      height: 182,
-      weight: 88,
-      targetWeight: 79,
-      primaryGoal: 'yag_yakimi',
-      experienceLevel: 'orta',
-      trainingDaysPerWeek: 4,
-      gymOrHome: 'salon',
-      injuriesOrHealthIssues: 'Hafif sağ omuz sıkışması (impingement), aşırı ağır overhead press yapamıyor.',
-      dietaryRestrictions: 'Laktoz intoleransı var, izole protein veya laktozsuz süt tercih ediyor.',
-      dailyActivityLevel: 'orta',
-      submittedAt: '2026-08-02T10:00:00Z',
-      reviewedByCoach: true,
-      coachFeedback: 'Omuz sıkışması için lateral raise varyasyonlarında nötr tutuş uygulayacağız. Laktozsuz izole whey ve kalori açığı protokolün hazırlandı.'
-    }
-  ]));
-
-  const [checkIns, setCheckIns] = useState<CheckIn[]>(() => loadStorage('checkins', [
-    {
-      id: 'chk-1',
-      userId: 'user-demo-1',
-      weekNumber: 1,
-      date: '2026-08-09',
-      weight: 87.8,
-      chestCm: 104,
-      waistCm: 89,
-      armCm: 38.5,
-      hipsCm: 102,
-      energyLevelRating: 4,
-      sleepQualityRating: 4,
-      dietAdherenceRating: 5,
-      clientNotes: 'İlk hafta kardiyolar biraz zorladı ama beslenme planına %100 sadık kaldım.',
-      coachNotes: 'Harika başlangıç Emre! İlk haftada 1 cm bel incelmesi muazzam. Aynen devam.',
-      coachReviewedAt: '2026-08-10'
-    },
-    {
-      id: 'chk-2',
-      userId: 'user-demo-1',
-      weekNumber: 4,
-      date: '2026-08-30',
-      weight: 85.2,
-      chestCm: 104.5,
-      waistCm: 85,
-      armCm: 39,
-      hipsCm: 99,
-      energyLevelRating: 5,
-      sleepQualityRating: 4,
-      dietAdherenceRating: 4,
-      clientNotes: 'Enerjim çok yüksek, kuvvetim arttı. Bench 95 kg 4 tekrar çıktı.',
-      coachNotes: 'Kuvvet artarken belden 4 cm gitmesi ideal bir body recomp göstergesi. Kaloriyi sabit tutuyoruz.',
-      coachReviewedAt: '2026-08-31'
-    }
-  ]));
+  // Coaching forms and check-ins live on the server: coaches see all, members only their own.
+  const [assessments, setAssessments] = useState<AssessmentForm[]>([]);
+  const [checkIns, setCheckIns] = useState<CheckIn[]>([]);
 
   // Blog, Coupons, Transformations, Testimonials, Newsletter
-  const [blogPosts, setBlogPosts] = useState<BlogPost[]>(() => loadStorage('blog_posts', INITIAL_BLOG_POSTS));
+  const [blogPosts, setBlogPosts, hydrateBlog] = useSharedContent<BlogPost[]>('blog_posts', INITIAL_BLOG_POSTS, notify);
   const [coupons, setCoupons] = useState<Coupon[]>([]);
-  const [transformations, setTransformations] = useState<TransformationStory[]>(() => loadStorage('transformations', INITIAL_TRANSFORMATIONS));
-  const [testimonials, setTestimonials] = useState<Testimonial[]>(() => loadStorage('testimonials', INITIAL_TESTIMONIALS));
-  const [newsletterSubscribers, setNewsletterSubscribers] = useState<string[]>(() => loadStorage('newsletter', ['ornek.ogrenci@gmail.com']));
+  const [transformations, setTransformations, hydrateTransformations] = useSharedContent<TransformationStory[]>('transformations', INITIAL_TRANSFORMATIONS, notify);
+  const [testimonials, setTestimonials, hydrateTestimonials] = useSharedContent<Testimonial[]>('testimonials', INITIAL_TESTIMONIALS, notify);
+  const [newsletterSubscribers, setNewsletterSubscribers] = useState<string[]>([]);
 
   // Modals
   const [searchOpen, setSearchOpen] = useState(false);
@@ -313,19 +287,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [language]);
 
   // Storage syncs
-  useEffect(() => saveStorage('settings', settings), [settings]);
-  useEffect(() => saveStorage('cms_sections', cmsSections), [cmsSections]);
-  useEffect(() => saveStorage('users', users), [users]);
   useEffect(() => saveStorage('cart', cart), [cart]);
   useEffect(() => saveStorage('applied_coupon', appliedCoupon), [appliedCoupon]);
   useEffect(() => saveStorage('wishlist', wishlist), [wishlist]);
-  useEffect(() => saveStorage('coaching_packages', coachingPackages), [coachingPackages]);
-  useEffect(() => saveStorage('assessments', assessments), [assessments]);
-  useEffect(() => saveStorage('checkins', checkIns), [checkIns]);
-  useEffect(() => saveStorage('blog_posts', blogPosts), [blogPosts]);
-  useEffect(() => saveStorage('transformations', transformations), [transformations]);
-  useEffect(() => saveStorage('testimonials', testimonials), [testimonials]);
-  useEffect(() => saveStorage('newsletter', newsletterSubscribers), [newsletterSubscribers]);
 
   // Restore the signed-in user from the server session on first load.
   useEffect(() => {
@@ -358,6 +322,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!staff) return;
     const id = setInterval(() => void refreshOrders(), 60_000);
     return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id, currentUser?.role]);
+
+  // Owner-edited content (settings, blog, testimonials...) comes from the server.
+  useEffect(() => {
+    contentApi.load().then(c => {
+      if (!c) return;
+      if (c.settings && typeof c.settings === 'object') hydrateSettings({ ...INITIAL_SETTINGS, ...(c.settings as Partial<SiteSettings>) });
+      if (Array.isArray(c.cms_sections)) hydrateCms(c.cms_sections as CMSSection[]);
+      if (Array.isArray(c.coaching_packages)) hydratePackages(c.coaching_packages as CoachingPackage[]);
+      if (Array.isArray(c.blog_posts)) hydrateBlog(c.blog_posts as BlogPost[]);
+      if (Array.isArray(c.testimonials)) hydrateTestimonials(c.testimonials as Testimonial[]);
+      if (Array.isArray(c.transformations)) hydrateTransformations(c.transformations as TransformationStory[]);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Coaching data and the member / subscriber lists follow the signed-in user.
+  useEffect(() => {
+    if (!currentUser) {
+      setAssessments([]);
+      setCheckIns([]);
+      setUsers([]);
+      setNewsletterSubscribers([]);
+      return;
+    }
+    assessmentsApi.list().then(r => r.success && r.assessments && setAssessments(r.assessments));
+    checkInsApi.list().then(r => r.success && r.checkIns && setCheckIns(r.checkIns));
+    if (currentUser.role === 'SUPER_ADMIN') membersApi.list().then(r => r.success && r.users && setUsers(r.users));
+    if (currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'EDITOR') {
+      newsletterApi.list().then(r => r.success && r.subscribers && setNewsletterSubscribers(r.subscribers));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.id, currentUser?.role]);
 
@@ -483,7 +479,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   /** Keeps the admin panel's local member list in step with the signed-in server account. */
   const adoptUser = (user: User) => {
     setCurrentUser(user);
-    setUsers(prev => (prev.some(u => u.id === user.id) ? prev.map(u => (u.id === user.id ? { ...u, ...user } : u)) : [...prev, user]));
   };
 
   const login = async (email: string, pass: string, remember = true) => {
@@ -519,11 +514,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return res;
   };
 
-  const updateUserStatus = (userId: string, suspended: boolean) => {
-    setUsers(prev => prev.map(u => u.id === userId ? { ...u, suspended } : u));
-    if (currentUser?.id === userId) {
-      setCurrentUser(prev => prev ? { ...prev, suspended } : null);
-    }
+  const updateUserStatus = async (userId: string, suspended: boolean) => {
+    const res = await membersApi.setSuspended(userId, suspended);
+    if (res.success && res.user) setUsers(prev => prev.map(u => (u.id === userId ? res.user! : u)));
+    return res;
   };
 
   const deleteUser = async (userId: string) => {
@@ -684,35 +678,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Assessments & Check-ins
-  const submitAssessment = (data: Omit<AssessmentForm, 'id' | 'submittedAt' | 'reviewedByCoach'>) => {
-    const newForm: AssessmentForm = {
-      ...data,
-      id: `asmt-${Date.now()}`,
-      submittedAt: new Date().toISOString(),
-      reviewedByCoach: false
-    };
-    setAssessments(prev => [newForm, ...prev]);
+  const submitAssessment = async (data: Omit<AssessmentForm, 'id' | 'userId' | 'submittedAt' | 'reviewedByCoach'>) => {
+    const res = await assessmentsApi.submit(data);
+    if (res.success && res.assessment) setAssessments(prev => [res.assessment!, ...prev]);
+    return res;
   };
 
-  const reviewAssessment = (id: string, feedback: string) => {
-    setAssessments(prev =>
-      prev.map(a => a.id === id ? { ...a, reviewedByCoach: true, coachFeedback: feedback } : a)
-    );
+  const reviewAssessment = async (id: string, feedback: string) => {
+    const res = await assessmentsApi.review(id, feedback);
+    if (res.success && res.assessment) setAssessments(prev => prev.map(a => (a.id === id ? res.assessment! : a)));
+    return res;
   };
 
-  const submitCheckIn = (data: Omit<CheckIn, 'id' | 'date'>) => {
-    const newCheckIn: CheckIn = {
-      ...data,
-      id: `chk-${Date.now()}`,
-      date: new Date().toISOString().split('T')[0]
-    };
-    setCheckIns(prev => [newCheckIn, ...prev]);
+  const submitCheckIn = async (data: Omit<CheckIn, 'id' | 'userId' | 'weekNumber' | 'date'>) => {
+    const res = await checkInsApi.submit(data);
+    if (res.success && res.checkIn) setCheckIns(prev => [res.checkIn!, ...prev]);
+    return res;
   };
 
-  const addCoachNotesToCheckIn = (checkInId: string, notes: string) => {
-    setCheckIns(prev =>
-      prev.map(c => c.id === checkInId ? { ...c, coachNotes: notes, coachReviewedAt: new Date().toISOString() } : c)
-    );
+  const addCoachNotesToCheckIn = async (checkInId: string, notes: string) => {
+    const res = await checkInsApi.addCoachNotes(checkInId, notes);
+    if (res.success && res.checkIn) setCheckIns(prev => prev.map(c => (c.id === checkInId ? res.checkIn! : c)));
+    return res;
   };
 
   // Blog, Coupons, Content
@@ -746,16 +733,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setTestimonials(prev => prev.map(t => t.id === id ? { ...t, approved: !t.approved } : t));
   };
 
-  const subscribeNewsletter = (email: string) => {
-    const clean = email.trim().toLowerCase();
-    if (!clean.includes('@') || !clean.includes('.')) {
-      return { success: false, message: 'Lütfen geçerli bir e-posta adresi giriniz.' };
-    }
-    if (newsletterSubscribers.includes(clean)) {
-      return { success: false, message: 'Bu e-posta adresi bültenimize zaten kayıtlıdır.' };
-    }
-    setNewsletterSubscribers(prev => [...prev, clean]);
-    return { success: true, message: 'Tebrikler! Bültenimize başarıyla kaydoldunuz.' };
+  const subscribeNewsletter = async (email: string) => {
+    const res = await newsletterApi.subscribe(email.trim());
+    if (res.success) setNewsletterSubscribers(prev => [email.trim().toLowerCase(), ...prev]);
+    return res;
   };
 
   // Modals
@@ -775,16 +756,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const openAssessmentModal = () => setAssessmentModalOpen(true);
   const closeAssessmentModal = () => setAssessmentModalOpen(false);
 
-  const resetDemoData = () => {
-    setSettings(INITIAL_SETTINGS);
-    setCmsSections(INITIAL_CMS_SECTIONS);
-    setUsers(INITIAL_USERS);
-    setCoachingPackages(INITIAL_COACHING_PACKAGES);
-    setTransformations(INITIAL_TRANSFORMATIONS);
-    setTestimonials(INITIAL_TESTIMONIALS);
-    setBlogPosts(INITIAL_BLOG_POSTS);
-    localStorage.clear();
-  };
 
   return (
     <AppContext.Provider
@@ -876,7 +847,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         assessmentModalOpen,
         openAssessmentModal,
         closeAssessmentModal,
-        resetDemoData
       }}
     >
       {children}

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR } from './config.js';
 import { randomToken, sha256 } from './security.js';
-import type { Coupon, Order, Product } from '../src/types/index.js';
+import type { AssessmentForm, CheckIn, Coupon, Order, Product } from '../src/types/index.js';
 import { normalizeEmail, type PlaceOrderResult, type RateResult, type Store, type StoredUser, type TokenType } from './store.js';
 
 /**
@@ -26,10 +26,15 @@ interface Db {
   orders: Order[];
   coupons: Coupon[];
   couponsSeeded: boolean;
+  content: Record<string, unknown>;
+  subscribers: string[];
+  assessments: AssessmentForm[];
+  checkIns: CheckIn[];
 }
 
 const emptyDb = (): Db => ({
-  users: [], tokens: [], products: [], productsSeeded: false, images: {}, orders: [], coupons: [], couponsSeeded: false
+  users: [], tokens: [], products: [], productsSeeded: false, images: {}, orders: [], coupons: [], couponsSeeded: false,
+  content: {}, subscribers: [], assessments: [], checkIns: []
 });
 
 const DB_FILE = path.join(DATA_DIR, 'auth.json');
@@ -253,5 +258,89 @@ export class JsonStore implements Store {
     this.db.couponsSeeded = true;
     this.db.coupons = [...coupons];
     this.persist();
+  }
+
+  async getContent(key: string) {
+    return this.db.content[key];
+  }
+
+  async setContent(key: string, data: unknown) {
+    this.db.content[key] = data;
+    this.persist();
+  }
+
+  async listContent() {
+    return { ...this.db.content };
+  }
+
+  async addSubscriber(email: string) {
+    const e = normalizeEmail(email);
+    if (this.db.subscribers.includes(e)) return false;
+    this.db.subscribers.push(e);
+    this.persist();
+    return true;
+  }
+
+  async listSubscribers() {
+    return [...this.db.subscribers];
+  }
+
+  async listUsers() {
+    return [...this.db.users];
+  }
+
+  async saveAssessment(a: AssessmentForm) {
+    const i = this.db.assessments.findIndex(x => x.id === a.id);
+    if (i >= 0) this.db.assessments[i] = a;
+    else this.db.assessments.push(a);
+    this.persist();
+  }
+
+  async getAssessment(id: string) {
+    return this.db.assessments.find(a => a.id === id);
+  }
+
+  async updateAssessment(id: string, patch: Partial<AssessmentForm>) {
+    const a = this.db.assessments.find(x => x.id === id);
+    if (!a) return undefined;
+    Object.assign(a, patch);
+    this.persist();
+    return a;
+  }
+
+  async listAssessments() {
+    return [...this.db.assessments].sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
+  }
+
+  async listAssessmentsFor(userId: string, email: string) {
+    const e = normalizeEmail(email);
+    return (await this.listAssessments()).filter(a => a.userId === userId || normalizeEmail(a.userEmail || '') === e);
+  }
+
+  async saveCheckIn(c: CheckIn) {
+    const i = this.db.checkIns.findIndex(x => x.id === c.id);
+    if (i >= 0) this.db.checkIns[i] = c;
+    else this.db.checkIns.push(c);
+    this.persist();
+  }
+
+  async getCheckIn(id: string) {
+    return this.db.checkIns.find(c => c.id === id);
+  }
+
+  async updateCheckIn(id: string, patch: Partial<CheckIn>) {
+    const c = this.db.checkIns.find(x => x.id === id);
+    if (!c) return undefined;
+    Object.assign(c, patch);
+    this.persist();
+    return c;
+  }
+
+  async listCheckIns() {
+    return [...this.db.checkIns].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
+  }
+
+  async listCheckInsFor(userId: string) {
+    return (await this.listCheckIns()).filter(c => c.userId === userId);
   }
 }

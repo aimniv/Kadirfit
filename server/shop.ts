@@ -1,21 +1,34 @@
 import { INITIAL_COACHING_PACKAGES, INITIAL_SETTINGS } from '../src/data/initialData.js';
 import type { Coupon, CoachingPackage } from '../src/types/index.js';
+import type { Store } from './store.js';
 
 /**
  * Prices, shipping rules and coupon math live here so the server never trusts totals sent by the browser.
  * The shop's rules come from the same defaults the storefront shows to every visitor.
  */
 
-export const FREE_SHIPPING_THRESHOLD = INITIAL_SETTINGS.freeShippingThreshold;
-export const STANDARD_SHIPPING_FEE = INITIAL_SETTINGS.standardShippingFee;
+const num = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : fallback);
+
+/** Shipping rules the owner set in "Site Ayarları" (falls back to the built-in defaults). */
+export async function shippingRules(db: Store): Promise<{ freeShippingThreshold: number; standardShippingFee: number }> {
+  const settings = (await db.getContent('settings')) as Partial<typeof INITIAL_SETTINGS> | undefined;
+  return {
+    freeShippingThreshold: num(settings?.freeShippingThreshold, INITIAL_SETTINGS.freeShippingThreshold),
+    standardShippingFee: num(settings?.standardShippingFee, INITIAL_SETTINGS.standardShippingFee)
+  };
+}
 /** Matches the "Kapıda ödeme hizmet bedeli 30 TL" notice shown at checkout. */
 export const CASH_ON_DELIVERY_FEE = 30;
 
 export const COACHING_IMAGE =
   'https://images.unsplash.com/photo-1534438327276-14e5300c3a48?auto=format&fit=crop&w=600&q=80';
 
-export const findCoachingPackage = (id: string): CoachingPackage | undefined =>
-  INITIAL_COACHING_PACKAGES.find(p => p.id === id);
+/** Coaching packages with the prices the owner set in the admin panel. */
+export async function findCoachingPackage(db: Store, id: string): Promise<CoachingPackage | undefined> {
+  const stored = await db.getContent('coaching_packages');
+  const list = Array.isArray(stored) ? (stored as CoachingPackage[]) : INITIAL_COACHING_PACKAGES;
+  return list.find(p => p.id === id);
+}
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -36,8 +49,8 @@ export function couponDiscount(coupon: Coupon, subtotal: number): number {
   return round2(coupon.type === 'percentage' ? (subtotal * coupon.value) / 100 : Math.min(subtotal, coupon.value));
 }
 
-export function shippingFee(subtotal: number, onlyCoaching: boolean): number {
-  return onlyCoaching || subtotal >= FREE_SHIPPING_THRESHOLD || subtotal === 0 ? 0 : STANDARD_SHIPPING_FEE;
+export function shippingFee(rules: { freeShippingThreshold: number; standardShippingFee: number }, subtotal: number, onlyCoaching: boolean): number {
+  return onlyCoaching || subtotal >= rules.freeShippingThreshold || subtotal === 0 ? 0 : rules.standardShippingFee;
 }
 
 export { round2 };

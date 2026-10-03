@@ -141,13 +141,11 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   };
 
   // Handle check-in submit
-  const handleCheckInSubmit = (e: React.FormEvent) => {
+  const handleCheckInSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!checkInWeight) return;
 
-    submitCheckIn({
-      userId: currentUser.id,
-      weekNumber: userCheckIns.length + 1,
+    const res = await submitCheckIn({
       weight: parseFloat(checkInWeight),
       waistCm: checkInWaist ? parseFloat(checkInWaist) : undefined,
       chestCm: checkInChest ? parseFloat(checkInChest) : undefined,
@@ -157,6 +155,10 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
       dietAdherenceRating: checkInDiet,
       clientNotes: checkInNotes
     });
+    if (!res.success) {
+      notify(res.message || 'Check-in gönderilemedi.', 'error');
+      return;
+    }
 
     setShowCheckInModal(false);
     setCheckInWeight('');

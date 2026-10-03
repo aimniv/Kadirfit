@@ -12,7 +12,8 @@ import {
   findCoachingPackage,
   paymentOptions,
   round2,
-  shippingFee
+  shippingFee,
+  shippingRules
 } from './shop.js';
 import type { Store, StoredUser } from './store.js';
 
@@ -87,7 +88,7 @@ ordersRouter.post('/', wrap(async (req, res, db) => {
       return fail(res, 400, 'Sepetinizdeki ürün bilgileri geçersiz.');
     }
 
-    const pkg = raw?.isCoachingPackage ? findCoachingPackage(productId) : undefined;
+    const pkg = raw?.isCoachingPackage ? await findCoachingPackage(db, productId) : undefined;
     if (raw?.isCoachingPackage) {
       const months = Number(raw?.coachingDurationMonths);
       const duration = pkg?.durations.find(d => d.months === months);
@@ -148,7 +149,7 @@ ordersRouter.post('/', wrap(async (req, res, db) => {
     couponId = coupon!.id;
   }
 
-  const shipping = shippingFee(subtotal, items.every(i => i.isCoaching));
+  const shipping = shippingFee(await shippingRules(db), subtotal, items.every(i => i.isCoaching));
   const paymentFee = paymentMethod === 'cash_on_delivery' && !items.every(i => i.isCoaching) ? CASH_ON_DELIVERY_FEE : 0;
   const total = round2(Math.max(0, subtotal - discountAmount + shipping + paymentFee));
 

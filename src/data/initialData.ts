@@ -49,8 +49,8 @@ export const INITIAL_SETTINGS: SiteSettings = {
   paymentGatewayPayTR: true,
   paymentGatewayBankTransfer: true,
   paymentGatewayCashOnDelivery: true,
-  bankIbanGaranti: 'TR44 0006 2000 1234 5678 9012 34 (Garanti BBVA - Kadirfit Spor A.Ş.)',
-  bankIbanZiraat: 'TR12 0001 0001 2345 6789 0001 02 (Ziraat Bankası - Kadirfit Spor A.Ş.)',
+  bankIbanGaranti: '',
+  bankIbanZiraat: '',
   maintenanceMode: false,
   kvkkText: `KADİRFİT KİŞİSEL VERİLERİN KORUNMASI VE İŞLENMESİ AYDINLATMA METNİ
 Veri Sorumlusu: Kadirfit Spor ve Sağlıklı Yaşam Anonim Şirketi ("Kadirfit").
