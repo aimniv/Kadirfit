@@ -21,6 +21,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { useDialog } from '../../context/DialogContext';
 import { Order, CheckIn, Address } from '../../types';
 
 interface UserDashboardProps {
@@ -51,6 +52,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     requestOrderReturn
   } = useApp();
 
+  const { confirm, notify } = useDialog();
   const [activeTab, setActiveTab] = useState<string>(initialTab);
 
   // Return request modal
@@ -438,7 +440,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                     <div className="flex items-center gap-2 ml-auto">
                       {/* Invoice PDF download simulator */}
                       <button
-                        onClick={() => alert(`Fatura (${ord.orderNumber}.pdf) indiriliyor...`)}
+                        onClick={() => notify(`Fatura (${ord.orderNumber}.pdf) indiriliyor...`)}
                         className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded flex items-center gap-1.5 transition-colors"
                       >
                         <Download className="w-3.5 h-3.5" />
@@ -515,7 +517,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   </div>
                 </div>
                 <button
-                  onClick={() => alert('Antrenman_Programi_Kadirfit.pdf indirildi.')}
+                  onClick={() => notify('Antrenman_Programi_Kadirfit.pdf indirildi.', 'success')}
                   className="p-2 bg-neutral-800 hover:bg-[#FF5A1F] text-white rounded transition-colors"
                   title="İndir"
                 >
@@ -534,7 +536,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   </div>
                 </div>
                 <button
-                  onClick={() => alert('Beslenme_Programi_Kadirfit.pdf indirildi.')}
+                  onClick={() => notify('Beslenme_Programi_Kadirfit.pdf indirildi.', 'success')}
                   className="p-2 bg-neutral-800 hover:bg-[#FF5A1F] text-white rounded transition-colors"
                   title="İndir"
                 >
@@ -760,7 +762,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                   <button
                     onClick={() => {
                       navigator.clipboard?.writeText(c.code);
-                      alert(`"${c.code}" kodu kopyalandı!`);
+                      notify(`"${c.code}" kodu kopyalandı!`, 'success');
                     }}
                     className="px-3 py-1.5 bg-neutral-800 hover:bg-[#FF5A1F] text-white text-xs font-bold rounded transition-colors"
                   >
@@ -815,7 +817,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 onClick={async () => {
                   const res = await updateProfile({ firstName, lastName, phone });
                   if (!res.success) {
-                    alert(res.message || 'Profil güncellenemedi.');
+                    notify(res.message || 'Profil güncellenemedi.', 'error');
                     return;
                   }
                   setProfileSaved(true);
@@ -843,10 +845,14 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
                 6698 sayılı KVKK uyarınca üyeliğinizi ve kişisel verilerinizi platformumuzdan kalıcı olarak silebilirsiniz. Aktif koçluk süreciniz sonlanır.
               </p>
               <button
-                onClick={() => {
-                  if (confirm('Hesabınızı ve tüm verilerinizi kalıcı olarak silmek istediğinize emin misiniz?')) {
-                    deleteUser(currentUser.id);
-                  }
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: 'Hesabı kalıcı olarak sil',
+                    message: 'Hesabınız ve tüm verileriniz kalıcı olarak silinecek. Bu işlem geri alınamaz.',
+                    confirmLabel: 'Hesabımı Sil',
+                    danger: true
+                  });
+                  if (ok) deleteUser(currentUser.id);
                 }}
                 className="px-4 py-2 bg-rose-600/80 hover:bg-rose-600 text-white text-xs font-bold rounded uppercase transition-colors"
               >

@@ -30,6 +30,7 @@ import {
 } from '../data/initialData';
 import { authApi, AuthResult } from '../lib/authApi';
 import { productsApi, ProductResult } from '../lib/productsApi';
+import { useDialog } from './DialogContext';
 
 export type AuthTab = 'login' | 'register' | 'forgot' | 'reset';
 
@@ -179,6 +180,7 @@ const saveStorage = (key: string, value: unknown) => {
 };
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { notify } = useDialog();
   // Language
   const [language, setLanguageState] = useState<Language>(() => loadStorage('language', 'tr'));
 
@@ -499,7 +501,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (currentUser?.id === userId) {
       const res = await authApi.deleteAccount();
       if (!res.success) {
-        alert(res.message || 'Hesap silinemedi. Lütfen tekrar deneyin.');
+        notify(res.message || 'Hesap silinemedi. Lütfen tekrar deneyin.', 'error');
         return;
       }
       setCurrentUser(null);

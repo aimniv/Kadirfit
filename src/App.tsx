@@ -5,6 +5,7 @@
 
 import React, { useState } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
+import { DialogProvider } from './context/DialogContext';
 import { Navbar } from './components/common/Navbar';
 import { Footer } from './components/common/Footer';
 import { WhatsAppButton } from './components/common/WhatsAppButton';
@@ -246,8 +247,10 @@ const MainApp: React.FC = () => {
 
 export default function App() {
   return (
-    <AppProvider>
-      <MainApp />
-    </AppProvider>
+    <DialogProvider>
+      <AppProvider>
+        <MainApp />
+      </AppProvider>
+    </DialogProvider>
   );
 }
