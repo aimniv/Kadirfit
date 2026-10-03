@@ -1,4 +1,4 @@
-import type { User } from '../src/types/index.js';
+import type { Product, User } from '../src/types/index.js';
 import { DATABASE_URL } from './config.js';
 
 export interface StoredUser extends User {
@@ -34,6 +34,17 @@ export interface Store {
   /** Read-only: is `key` already at or over `limit`? */
   rateBlocked(key: string, limit: number): Promise<{ limited: boolean; retryAfterSec: number }>;
   rateReset(key: string): Promise<void>;
+
+  /** Products, newest first. */
+  listProducts(): Promise<Product[]>;
+  getProduct(id: string): Promise<Product | undefined>;
+  /** Insert or replace. New ids are listed first. */
+  saveProduct(product: Product): Promise<void>;
+  removeProduct(id: string): Promise<boolean>;
+  /** Loads the starter catalogue exactly once per database, so deleting every product later doesn't bring them back. */
+  seedProducts(products: Product[]): Promise<void>;
+  saveImage(id: string, mime: string, data: Buffer): Promise<void>;
+  getImage(id: string): Promise<{ mime: string; data: Buffer } | undefined>;
 }
 
 export const normalizeEmail = (email: string) => email.trim().toLowerCase();
@@ -47,7 +58,9 @@ export function getStore(): Promise<Store> {
       ? new (await import('./store-pg.js')).PgStore()
       : new (await import('./store-json.js')).JsonStore();
     await store.init();
-    await (await import('./seed.js')).seedUsers(store);
+    const seed = await import('./seed.js');
+    await seed.seedUsers(store);
+    await seed.seedCatalogue(store);
     return store;
   })().catch(err => {
     ready = null; // let the next request retry instead of caching a failure

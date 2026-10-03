@@ -28,6 +28,7 @@ import {
   Search
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { ProductFormModal } from './ProductFormModal';
 import { Role, OrderStatus, Product, CoachingPackage, Coupon, BlogPost, TransformationStory } from '../../types';
 
 interface AdminPanelProps {
@@ -72,6 +73,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<string>('dashboard');
+  // `undefined` = form closed, `null` = creating a new product, otherwise editing that product
+  const [productForm, setProductForm] = useState<Product | null | undefined>(undefined);
 
   // Guard: if current user is not logged in or role is USER, display authorization error
   const isAuthorized = currentUser && currentUser.role !== 'USER';
@@ -490,30 +493,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
                 </h4>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => {
-                      const title = prompt('Yeni ürün adı:');
-                      if (!title) return;
-                      const newProd: Product = {
-                        id: `prod-${Date.now()}`,
-                        title,
-                        slug: title.toLowerCase().replace(/ /g, '-'),
-                        category: 'clothing',
-                        subcategory: 'Tişört',
-                        price: 799,
-                        sku: `KF-${Math.floor(100 + Math.random() * 900)}`,
-                        images: ['https://images.unsplash.com/photo-1521572267360-ee0c2909d518?auto=format&fit=crop&w=600&q=80'],
-                        description: 'Yüksek kaliteli sporcu giyimi.',
-                        shortDescription: 'Özel dikişli sporcu ürünü.',
-                        features: ['%100 Kaliteli Kumaş', 'Nefes Alabilir'],
-                        stock: 50,
-                        rating: 5.0,
-                        reviewCount: 1,
-                        isFeatured: true,
-                        brand: 'Kadirfit Apparel',
-                        tags: ['yeni', 'giyim']
-                      };
-                      addProduct(newProd);
-                    }}
+                    onClick={() => setProductForm(null)}
                     className="px-3.5 py-1.5 bg-[#FF5A1F] hover:bg-[#e04e18] text-white text-xs font-bold rounded flex items-center gap-1.5"
                   >
                     <Plus className="w-3.5 h-3.5" />
@@ -566,7 +546,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
                         </td>
                         <td className="p-3.5">
                           <button
-                            onClick={() => updateProduct({ ...p, isFeatured: !p.isFeatured })}
+                            onClick={async () => {
+                              const res = await updateProduct({ id: p.id, isFeatured: !p.isFeatured });
+                              if (!res.success) alert(res.message);
+                            }}
                             className={`text-xs ${p.isFeatured ? 'text-[#FF5A1F] font-bold' : 'text-neutral-500'}`}
                           >
                             {p.isFeatured ? '★ Evet' : 'Hayır'}
@@ -574,19 +557,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
                         </td>
                         <td className="p-3.5 text-right space-x-2">
                           <button
-                            onClick={() => {
-                              const newStock = prompt('Yeni stok adedi:', String(p.stock));
-                              if (newStock) updateProduct({ ...p, stock: parseInt(newStock) || 0 });
-                            }}
+                            onClick={() => setProductForm(p)}
                             className="p-1 text-neutral-400 hover:text-white"
-                            title="Stok Güncelle"
+                            title="Ürünü Düzenle"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => {
                               if (confirm(`"${p.title}" ürününü silmek istediğinize emin misiniz?`)) {
-                                deleteProduct(p.id);
+                                deleteProduct(p.id).then(res => {
+                                  if (!res.success) alert(res.message);
+                                });
                               }
                             }}
                             className="p-1 text-neutral-400 hover:text-rose-400"
@@ -1093,6 +1075,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
 
         </div>
       </main>
+
+      {productForm !== undefined && (
+        <ProductFormModal product={productForm} onClose={() => setProductForm(undefined)} />
+      )}
     </div>
   );
 };

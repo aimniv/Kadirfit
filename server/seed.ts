@@ -1,5 +1,6 @@
 import { SEED_DEMO_USERS, isProd } from './config.js';
 import { hashPassword } from './security.js';
+import { INITIAL_PRODUCTS } from '../src/data/initialData.js';
 import type { Store, StoredUser } from './store.js';
 
 // Same ids/profiles as src/data/initialData.ts so demo orders, assessments and check-ins keep matching.
@@ -68,4 +69,9 @@ export async function seedUsers(store: Store): Promise<void> {
   } else if (isProd && !SEED_DEMO_USERS && !adminEmail) {
     console.warn('[seed] No ADMIN_EMAIL/ADMIN_PASSWORD set — set them once to create the first admin account.');
   }
+}
+
+/** First run only: load the starter catalogue so the shop isn't empty. */
+export async function seedCatalogue(store: Store): Promise<void> {
+  await store.seedProducts(INITIAL_PRODUCTS);
 }

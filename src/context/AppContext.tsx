@@ -29,6 +29,7 @@ import {
   INITIAL_ORDERS
 } from '../data/initialData';
 import { authApi, AuthResult } from '../lib/authApi';
+import { productsApi, ProductResult } from '../lib/productsApi';
 
 export type AuthTab = 'login' | 'register' | 'forgot' | 'reset';
 
@@ -99,9 +100,9 @@ interface AppContextType {
 
   // Products & Coaching
   products: Product[];
-  addProduct: (product: Product) => void;
-  updateProduct: (product: Product) => void;
-  deleteProduct: (id: string) => void;
+  addProduct: (product: Partial<Product>) => Promise<ProductResult>;
+  updateProduct: (product: Partial<Product> & { id: string }) => Promise<ProductResult>;
+  deleteProduct: (id: string) => Promise<ProductResult>;
   coachingPackages: CoachingPackage[];
   updateCoachingPackage: (pkg: CoachingPackage) => void;
 
@@ -199,7 +200,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [wishlist, setWishlist] = useState<string[]>(() => loadStorage('wishlist', ['prod-heavy-tee-black', 'prod-whey-isolate']));
 
   // Products & Coaching
-  const [products, setProducts] = useState<Product[]>(() => loadStorage('products', INITIAL_PRODUCTS));
+  // The catalogue lives on the server; the built-in list only shows until it loads (or if the server is unreachable).
+  const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
   const [coachingPackages, setCoachingPackages] = useState<CoachingPackage[]>(() => loadStorage('coaching_packages', INITIAL_COACHING_PACKAGES));
 
   // Orders
@@ -308,7 +310,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => saveStorage('cart', cart), [cart]);
   useEffect(() => saveStorage('applied_coupon', appliedCoupon), [appliedCoupon]);
   useEffect(() => saveStorage('wishlist', wishlist), [wishlist]);
-  useEffect(() => saveStorage('products', products), [products]);
   useEffect(() => saveStorage('coaching_packages', coachingPackages), [coachingPackages]);
   useEffect(() => saveStorage('orders', orders), [orders]);
   useEffect(() => saveStorage('assessments', assessments), [assessments]);
@@ -327,6 +328,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Load the shared catalogue from the server.
+  useEffect(() => {
+    productsApi.list().then(list => {
+      if (list) setProducts(list);
+    });
   }, []);
 
   // Handle the links in verification (?verify=) and password-reset (?reset=) e-mails.
@@ -587,9 +595,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const isInWishlist = (productId: string) => wishlist.includes(productId);
 
   // Products
-  const addProduct = (p: Product) => setProducts(prev => [p, ...prev]);
-  const updateProduct = (p: Product) => setProducts(prev => prev.map(item => item.id === p.id ? p : item));
-  const deleteProduct = (id: string) => setProducts(prev => prev.filter(p => p.id !== id));
+  const addProduct = async (p: Partial<Product>) => {
+    const res = await productsApi.create(p);
+    if (res.success && res.product) setProducts(prev => [res.product!, ...prev]);
+    return res;
+  };
+  const updateProduct = async (p: Partial<Product> & { id: string }) => {
+    const res = await productsApi.update(p.id, p);
+    if (res.success && res.product) setProducts(prev => prev.map(item => item.id === p.id ? res.product! : item));
+    return res;
+  };
+  const deleteProduct = async (id: string) => {
+    const res = await productsApi.remove(id);
+    if (res.success) setProducts(prev => prev.filter(p => p.id !== id));
+    return res;
+  };
 
   // Coaching
   const updateCoachingPackage = (pkg: CoachingPackage) => {
@@ -715,7 +735,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setSettings(INITIAL_SETTINGS);
     setCmsSections(INITIAL_CMS_SECTIONS);
     setUsers(INITIAL_USERS);
-    setProducts(INITIAL_PRODUCTS);
     setCoachingPackages(INITIAL_COACHING_PACKAGES);
     setOrders(INITIAL_ORDERS);
     setTransformations(INITIAL_TRANSFORMATIONS);
