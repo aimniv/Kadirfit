@@ -29,7 +29,23 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { ProductFormModal } from './ProductFormModal';
+import { useDialog } from '../../context/DialogContext';
 import { Role, OrderStatus, Product, CoachingPackage, Coupon, BlogPost, TransformationStory } from '../../types';
+
+/** Downloads rows as a UTF-8 CSV (with BOM so Excel shows Turkish characters correctly). */
+function downloadCsv(filename: string, header: string[], rows: Array<Array<string | number | undefined>>) {
+  const esc = (v: string | number | undefined) => {
+    const t = String(v ?? '');
+    return /[",\n;]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+  };
+  const csv = [header, ...rows].map(r => r.map(esc).join(';')).join('\r\n');
+  const url = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 interface AdminPanelProps {
   onExitAdmin: () => void;
@@ -72,6 +88,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
     resetDemoData
   } = useApp();
 
+  const { confirm, form, notify } = useDialog();
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   // `undefined` = form closed, `null` = creating a new product, otherwise editing that product
   const [productForm, setProductForm] = useState<Product | null | undefined>(undefined);
@@ -191,10 +208,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
           </button>
 
           <button
-            onClick={() => {
-              if (confirm('Tüm demo verileri varsayılan ayarlara sıfırlamak istiyor musunuz?')) {
-                resetDemoData();
-              }
+            onClick={async () => {
+              const ok = await confirm({
+                title: 'Demo verilerini sıfırla',
+                message: 'Siparişler, kuponlar, blog yazıları ve site ayarları varsayılan değerlere dönecek. Ürünler, üyeler ve fotoğraflar etkilenmez.',
+                confirmLabel: 'Sıfırla',
+                danger: true
+              });
+              if (ok) resetDemoData();
             }}
             className="w-full text-center text-[10px] text-neutral-500 hover:text-neutral-400 py-1"
           >
@@ -501,7 +522,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
                   </button>
 
                   <button
-                    onClick={() => alert('Ürün listesi CSV olarak dışa aktarıldı.')}
+                    onClick={() => {
+                      downloadCsv(
+                        'kadirfit-urunler.csv',
+                        ['SKU', 'Ürün', 'Kategori', 'Alt Kategori', 'Fiyat', 'İndirimli Fiyat', 'Stok'],
+                        products.map(p => [p.sku, p.title, p.category, p.subcategory, p.price, p.discountedPrice, p.stock])
+                      );
+                      notify('Ürün listesi indirildi.', 'success');
+                    }}
                     className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs rounded flex items-center gap-1.5"
                   >
                     <Download className="w-3.5 h-3.5" />
@@ -548,7 +576,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
                           <button
                             onClick={async () => {
                               const res = await updateProduct({ id: p.id, isFeatured: !p.isFeatured });
-                              if (!res.success) alert(res.message);
+                              if (!res.success) notify(res.message, 'error');
                             }}
                             className={`text-xs ${p.isFeatured ? 'text-[#FF5A1F] font-bold' : 'text-neutral-500'}`}
                           >
@@ -564,12 +592,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
                           <button
-                            onClick={() => {
-                              if (confirm(`"${p.title}" ürününü silmek istediğinize emin misiniz?`)) {
-                                deleteProduct(p.id).then(res => {
-                                  if (!res.success) alert(res.message);
-                                });
-                              }
+                            onClick={async () => {
+                              const ok = await confirm({
+                                title: 'Ürünü sil',
+                                message: `"${p.title}" ürünü ve fotoğrafları mağazadan kaldırılacak. Bu işlem geri alınamaz.`,
+                                confirmLabel: 'Ürünü Sil',
+                                danger: true
+                              });
+                              if (!ok) return;
+                              const res = await deleteProduct(p.id);
+                              if (!res.success) notify(res.message, 'error');
+                              else notify('Ürün silindi.', 'success');
                             }}
                             className="p-1 text-neutral-400 hover:text-rose-400"
                             title="Ürünü Sil"
@@ -625,9 +658,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
                             <span className="font-mono text-emerald-400 text-[11px]">{ord.trackingNumber}</span>
                           ) : (
                             <button
-                              onClick={() => {
-                                const tracking = prompt('Kargo Takip No (Yurtiçi Kargo):');
-                                if (tracking) updateOrderStatus(ord.id, 'Kargoda', tracking, 'Yurtiçi Kargo');
+                              onClick={async () => {
+                                const v = await form({
+                                  title: 'Kargo takip numarası',
+                                  description: `${ord.orderNumber} numaralı sipariş "Kargoda" durumuna geçecek.`,
+                                  fields: [{ name: 'tracking', label: 'Takip No (Yurtiçi Kargo)', placeholder: 'YK1234567890' }],
+                                  submitLabel: 'Kargoya Ver'
+                                });
+                                if (v) updateOrderStatus(ord.id, 'Kargoda', v.tracking, 'Yurtiçi Kargo');
                               }}
                               className="text-[#FF5A1F] underline text-[11px]"
                             >
@@ -708,9 +746,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
                         <p className="text-rose-400 text-[11px]">Sakatlık: {a.injuriesOrHealthIssues}</p>
                       )}
                       <button
-                        onClick={() => {
-                          const feedback = prompt('Kadir Hoca Notu ve Egzersiz/Beslenme Geri Bildirimi:');
-                          if (feedback) reviewAssessment(a.id, feedback);
+                        onClick={async () => {
+                          const v = await form({
+                            title: 'Program geri bildirimi',
+                            description: `${a.fullName} için antrenman ve beslenme notunuz öğrenci panelinde görünecek.`,
+                            fields: [{ name: 'feedback', label: 'Kadir Hoca Notu', type: 'textarea', defaultValue: a.coachFeedback ?? '' }],
+                            submitLabel: 'Onayla & Gönder'
+                          });
+                          if (v) reviewAssessment(a.id, v.feedback);
                         }}
                         className="px-3 py-1 bg-neutral-800 hover:bg-[#FF5A1F] text-white text-[11px] font-bold rounded transition-colors"
                       >
@@ -731,7 +774,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
                   Kayıtlı Üye ve Öğrenci Listesi ({users.length})
                 </h4>
                 <button
-                  onClick={() => alert('Üye listesi CSV olarak indirildi.')}
+                  onClick={() => {
+                    downloadCsv(
+                      'kadirfit-uyeler.csv',
+                      ['Ad', 'Soyad', 'E-posta', 'Telefon', 'Rol', 'Durum', 'Kayıt Tarihi'],
+                      users.map(u => [u.firstName, u.lastName, u.email, u.phone, u.role, u.suspended ? 'Askıda' : 'Aktif', u.createdAt.split('T')[0]])
+                    );
+                    notify('Üye listesi indirildi.', 'success');
+                  }}
                   className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs rounded flex items-center gap-1.5"
                 >
                   <Download className="w-3.5 h-3.5" />
@@ -780,11 +830,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
                         </td>
                         <td className="p-3.5 text-right space-x-2">
                           <button
-                            onClick={() => {
-                              const note = prompt(`${u.firstName} için haftalık check-in değerlendirme notu yazın:`);
-                              if (note && checkIns.length > 0) {
-                                addCoachNotesToCheckIn(checkIns[0].id, note);
-                                alert('Not öğrenci paneline iletildi!');
+                            onClick={async () => {
+                              const target = checkIns.find(c => c.userId === u.id) ?? null;
+                              if (!target) {
+                                notify(`${u.firstName} henüz check-in göndermemiş.`, 'info');
+                                return;
+                              }
+                              const v = await form({
+                                title: 'Check-in notu',
+                                description: `${u.firstName} için haftalık check-in değerlendirmenizi yazın.`,
+                                fields: [{ name: 'note', label: 'Değerlendirme notu', type: 'textarea', defaultValue: target.coachNotes ?? '' }],
+                                submitLabel: 'Notu Gönder'
+                              });
+                              if (v) {
+                                addCoachNotesToCheckIn(target.id, v.note);
+                                notify('Not öğrenci paneline iletildi.', 'success');
                               }
                             }}
                             className="px-2 py-1 bg-neutral-800 hover:bg-[#FF5A1F] text-white rounded text-[10px] font-bold"
@@ -814,22 +874,44 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
                   Kupon ve Kampanya Kodları ({coupons.length})
                 </h4>
                 <button
-                  onClick={() => {
-                    const code = prompt('Kupon Kodu (Örn: YAZ15):');
-                    if (!code) return;
-                    const val = prompt('İndirim Değeri (% veya TL):', '15');
-                    const newC: Coupon = {
+                  onClick={async () => {
+                    const v = await form({
+                      title: 'Yeni kupon oluştur',
+                      fields: [
+                        { name: 'code', label: 'Kupon Kodu', placeholder: 'YAZ15' },
+                        {
+                          name: 'type',
+                          label: 'İndirim Türü',
+                          type: 'select',
+                          options: [
+                            { value: 'percentage', label: 'Yüzde (%)' },
+                            { value: 'fixed', label: 'Sabit tutar (TL)' }
+                          ]
+                        },
+                        { name: 'value', label: 'İndirim Değeri', type: 'number', defaultValue: '15', hint: 'Yüzde ise 1-100 arası, sabit tutar ise TL' },
+                        { name: 'minCartAmount', label: 'Minimum Sepet Tutarı (TL)', type: 'number', defaultValue: '500' }
+                      ],
+                      submitLabel: 'Kuponu Oluştur'
+                    });
+                    if (!v) return;
+                    const value = Number(v.value);
+                    const type = v.type as Coupon['type'];
+                    if (!(value > 0) || (type === 'percentage' && value > 100)) {
+                      notify('İndirim değeri geçersiz.', 'error');
+                      return;
+                    }
+                    addCoupon({
                       id: `coup-${Date.now()}`,
-                      code: code.toUpperCase(),
-                      type: 'percentage',
-                      value: parseInt(val || '10'),
-                      minCartAmount: 500,
+                      code: v.code.toUpperCase().replace(/\s+/g, ''),
+                      type,
+                      value,
+                      minCartAmount: Math.max(0, Number(v.minCartAmount) || 0),
                       expiresAt: '2027-12-31',
                       usageCount: 0,
                       usageLimit: 500,
                       isActive: true
-                    };
-                    addCoupon(newC);
+                    });
+                    notify('Kupon oluşturuldu.', 'success');
                   }}
                   className="px-3.5 py-1.5 bg-[#FF5A1F] hover:bg-[#e04e18] text-white text-xs font-bold rounded flex items-center gap-1.5"
                 >
@@ -870,9 +952,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
                     Blog Makaleleri ({blogPosts.length})
                   </h4>
                   <button
-                    onClick={() => {
-                      const title = prompt('Makale Başlığı:');
-                      if (!title) return;
+                    onClick={async () => {
+                      const v = await form({
+                        title: 'Yeni makale',
+                        fields: [{ name: 'title', label: 'Makale Başlığı', placeholder: 'Hipertrofi için haftalık hacim nasıl planlanır?' }],
+                        submitLabel: 'Makaleyi Ekle'
+                      });
+                      if (!v) return;
+                      const title = v.title;
                       addBlogPost({
                         id: `blog-${Date.now()}`,
                         title,
@@ -945,7 +1032,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
                   VIP E-Bülten Kayıtlı Aboneler ({newsletterSubscribers.length})
                 </h4>
                 <button
-                  onClick={() => alert(`Aboneler CSV olarak dışa aktarıldı (${newsletterSubscribers.length} e-posta)`)}
+                  onClick={() => {
+                    downloadCsv('kadirfit-aboneler.csv', ['E-posta'], newsletterSubscribers.map(e => [e]));
+                    notify(`${newsletterSubscribers.length} abone indirildi.`, 'success');
+                  }}
                   className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs rounded flex items-center gap-1.5"
                 >
                   <Download className="w-3.5 h-3.5" />
