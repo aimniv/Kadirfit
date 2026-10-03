@@ -60,7 +60,12 @@ const MainApp: React.FC = () => {
 
   // If in Admin Panel View
   if (currentView === 'admin') {
-    return <AdminPanel onExitAdmin={() => handleNavigate('home')} />;
+    return (
+      <>
+        <AdminPanel onExitAdmin={() => handleNavigate('home')} />
+        <AuthModal onOpenLegal={(doc) => handleNavigate('legal', doc)} />
+      </>
+    );
   }
 
   return (

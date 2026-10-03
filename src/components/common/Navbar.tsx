@@ -22,7 +22,6 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigate, currentView }) => {
   const {
     currentUser,
     logout,
-    switchRole,
     openCart,
     cart,
     openSearch,
@@ -57,31 +56,6 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigate, currentView }) => {
           </div>
 
           <div className="flex items-center gap-3 ml-auto">
-            {/* Quick Role Switcher for Evaluator Convenience */}
-            <div className="flex items-center gap-1.5 bg-neutral-900 px-2 py-0.5 rounded border border-neutral-800">
-              <span className="text-neutral-500">Aktif Rol:</span>
-              <span className="font-semibold text-[#FF5A1F] uppercase">{currentUser?.role || 'MİSAFİR'}</span>
-              <select
-                aria-label="Rol Değiştir"
-                value={currentUser?.role || 'GUEST'}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  if (val === 'GUEST') {
-                    logout();
-                  } else {
-                    switchRole(val as any);
-                  }
-                }}
-                className="bg-transparent text-[11px] text-white focus:outline-none cursor-pointer"
-              >
-                <option value="SUPER_ADMIN" className="bg-neutral-900 text-white">Süper Admin</option>
-                <option value="ORDER_MANAGER" className="bg-neutral-900 text-white">Sipariş Yöneticisi</option>
-                <option value="EDITOR" className="bg-neutral-900 text-white">İçerik Editörü</option>
-                <option value="USER" className="bg-neutral-900 text-white">Kayıtlı Öğrenci / Müşteri</option>
-                <option value="GUEST" className="bg-neutral-900 text-white">Çıkış (Misafir)</option>
-              </select>
-            </div>
-
             {/* Language Switcher */}
             <div className="relative">
               <button

@@ -42,8 +42,10 @@ Sitedeki tüm içerikler, ürünler, siparişler, öğrenci check-in takipleri v
   - Koçluk paketleri de mağaza sepetine eklenerek aynı güvenli akışla satın alınabilir.
 
 ### 4. Üyelik Sistemi (Kullanıcı Hesabı)
-- **Kayıt Ol**: Ad, soyad, e-posta, telefon (+90 maskeli), şifre güç göstergesi, KVKK ve sözleşme onayları.
-- **Giriş Yap**: E-posta ve şifre, güvenlik kilidi (ardışık hatalı denemelerde kilitlenme), hızlı demo hesap doldurma.
+Üyelik sistemi gerçek bir Express sunucusu üzerinde çalışır (`server/`): şifreler `scrypt` ile hashlenir, oturum httpOnly + imzalı çerezdedir.
+- **Kayıt Ol**: Ad, soyad, e-posta, telefon, şifre güç göstergesi, KVKK ve sözleşme onayları. Kayıttan sonra **e-posta doğrulama bağlantısı** (24 saat geçerli) gönderilir; doğrulanmayan hesap giriş yapamaz, doğrulama maili tekrar istenebilir.
+- **Giriş Yap**: E-posta ve şifre, "Beni Hatırla" (30 gün), sunucu taraflı güvenlik kilidi (5 hatalı denemede 15 dk kilit).
+- **Şifremi Unuttum**: E-postaya 1 saat geçerli, tek kullanımlık sıfırlama bağlantısı gönderilir. Hesap var/yok bilgisi sızdırılmaz. Şifre değişince açık tüm oturumlar sonlandırılır.
 - **Hesabım Paneli**:
   - *Genel Bakış*: Hoş geldin kartı, aktif koçluk süresi sayacı, son sipariş özeti.
   - *Siparişlerim*: Sipariş listesi, Yurtiçi Kargo takip linki, E-Fatura indirme, 14 gün ücretsiz iade/değişim formu.
@@ -68,7 +70,7 @@ Sitedeki tüm içerikler, ürünler, siparişler, öğrenci check-in takipleri v
 
 ## 🔑 Demo Giriş Bilgileri
 
-Üst barda yer alan hızlı rol seçici ile dilediğiniz zaman tek tıkla rol değiştirebilirsiniz:
+Geliştirme modunda (`npm run dev`) aşağıdaki hesaplar otomatik oluşturulur ve giriş ekranında "Hızlı Demo Girişi" butonları görünür. Production'da demo hesaplar oluşturulmaz (`ADMIN_EMAIL` / `ADMIN_PASSWORD` ile ilk admin tanımlanır).
 
 | Rol | E-Posta | Şifre | Yetki |
 |---|---|---|---|
@@ -83,17 +85,24 @@ Sitedeki tüm içerikler, ürünler, siparişler, öğrenci check-in takipleri v
 # Bağımlılıkları yükleyin
 npm install
 
-# Geliştirme sunucusunu başlatın
+# Geliştirme sunucusunu başlatın (Express + Vite, tek port)
 npm run dev
 
-# Derleme testi (Production Build)
+# Production derlemesi (dist/ + server.js) ve çalıştırma
 npm run build
+npm start
 
 # TypeScript kontrolü
 npm run lint
 ```
 
 Sunucu varsayılan olarak `http://localhost:3000` adresinde çalışacaktır.
+
+### E-posta (doğrulama ve şifre sıfırlama)
+`.env.example` dosyasını `.env` olarak kopyalayıp `SMTP_*` ve `MAIL_FROM` değerlerini kendi SMTP sağlayıcınızla (Brevo, Mailgun, Gmail uygulama şifresi, Resend SMTP vb.) doldurun.
+- **SMTP tanımlı değilken (geliştirme)**: e-postalar gönderilmez; bağlantılar sunucu konsoluna yazılır ve arayüzde sarı bir kutuda gösterilir, böylece akış test edilebilir.
+- **Production'da** `AUTH_SECRET` (32+ karakter) ve `APP_URL` zorunludur; SMTP olmadan e-postalar **gönderilemez**.
+- Hesaplar `DATA_DIR` (varsayılan `./data/auth.json`) içinde tutulur. Tek sunucu için uygundur; birden fazla instance veya geçici dosya sistemi (Vercel/Cloud Run) kullanıyorsanız `server/store.ts` dosyasını Postgres gibi kalıcı bir veritabanıyla değiştirin.
 
 ---
 

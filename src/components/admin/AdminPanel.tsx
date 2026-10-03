@@ -37,7 +37,7 @@ interface AdminPanelProps {
 export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
   const {
     currentUser,
-    switchRole,
+    openAuthModal,
     settings,
     updateSettings,
     cmsSections,
@@ -89,15 +89,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
           Admin paneline sadece SUPER_ADMIN, ORDER_MANAGER veya EDITOR yetkisine sahip kullanıcılar erişebilir.
         </p>
 
-        {/* Quick Demo Switcher */}
         <div className="p-4 bg-neutral-900 border border-neutral-800 rounded-xl space-y-3 max-w-xs w-full">
-          <p className="text-[11px] text-neutral-400 font-semibold">Test için yönetici rolüne geçin:</p>
-          <button
-            onClick={() => switchRole('SUPER_ADMIN')}
-            className="w-full py-2.5 bg-[#FF5A1F] hover:bg-[#e04e18] text-white text-xs font-bold uppercase rounded"
-          >
-            Süper Admin Olarak Giriş Yap
-          </button>
+          <p className="text-[11px] text-neutral-400 font-semibold">
+            {currentUser ? 'Bu hesabın yönetim paneline erişim yetkisi yok.' : 'Yönetim paneli için yönetici hesabınızla giriş yapın.'}
+          </p>
+          {!currentUser && (
+            <button
+              onClick={() => openAuthModal('login')}
+              className="w-full py-2.5 bg-[#FF5A1F] hover:bg-[#e04e18] text-white text-xs font-bold uppercase rounded"
+            >
+              Giriş Yap
+            </button>
+          )}
           <button
             onClick={onExitAdmin}
             className="w-full py-2 bg-neutral-800 text-neutral-300 text-xs font-semibold rounded hover:bg-neutral-700"

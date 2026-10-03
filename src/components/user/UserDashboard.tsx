@@ -46,6 +46,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
     addToCart,
     toggleWishlist,
     updateProfile,
+    openAuthModal,
     deleteUser,
     requestOrderReturn
   } = useApp();
@@ -104,6 +105,12 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
         <p className="text-neutral-400 text-xs max-w-sm mb-6">
           Siparişlerinizi ve koçluk alanınızı görüntülemek için lütfen oturum açın.
         </p>
+        <button
+          onClick={() => openAuthModal('login')}
+          className="px-6 py-2.5 bg-[#FF5A1F] hover:bg-[#e04e18] text-white text-xs font-bold uppercase tracking-wider rounded-lg"
+        >
+          Giriş Yap / Kayıt Ol
+        </button>
       </div>
     );
   }
@@ -805,8 +812,12 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
               </div>
 
               <button
-                onClick={() => {
-                  updateProfile({ firstName, lastName, phone });
+                onClick={async () => {
+                  const res = await updateProfile({ firstName, lastName, phone });
+                  if (!res.success) {
+                    alert(res.message || 'Profil güncellenemedi.');
+                    return;
+                  }
                   setProfileSaved(true);
                   setTimeout(() => setProfileSaved(false), 2000);
                 }}
