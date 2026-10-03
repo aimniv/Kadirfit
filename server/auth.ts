@@ -42,7 +42,7 @@ const wrap =
 
 const str = (v: unknown, max = 200): string => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 
-const toPublicUser = ({ passwordHash: _h, sessionVersion: _s, ...user }: StoredUser): User => user;
+export const toPublicUser = ({ passwordHash: _h, sessionVersion: _s, ...user }: StoredUser): User => user;
 
 const clientIp = (req: Request) => req.ip || 'unknown';
 

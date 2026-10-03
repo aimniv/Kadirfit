@@ -11,10 +11,10 @@ export const CtaNewsletterSection: React.FC<CtaNewsletterSectionProps> = ({ onSt
   const [email, setEmail] = useState('');
   const [msg, setMsg] = useState<{ text: string; success: boolean } | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email) return;
-    const res = subscribeNewsletter(email);
+    const res = await subscribeNewsletter(email);
     setMsg({ text: res.message, success: res.success });
     if (res.success) setEmail('');
   };

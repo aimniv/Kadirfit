@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { X, ClipboardCheck, ArrowRight, ShieldCheck } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { useDialog } from '../../context/DialogContext';
 
 export const AssessmentFormModal: React.FC = () => {
+  const { notify } = useDialog();
   const {
     assessmentModalOpen,
     closeAssessmentModal,
@@ -35,10 +37,9 @@ export const AssessmentFormModal: React.FC = () => {
 
   if (!assessmentModalOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    submitAssessment({
-      userId: currentUser?.id || `guest-${Date.now()}`,
+    const res = await submitAssessment({
       userEmail: email,
       fullName,
       age: parseInt(age) || 25,
@@ -54,6 +55,10 @@ export const AssessmentFormModal: React.FC = () => {
       dietaryRestrictions: dietary,
       dailyActivityLevel: activity
     });
+    if (!res.success) {
+      notify(res.message || 'Form gönderilemedi. Lütfen tekrar deneyin.', 'error');
+      return;
+    }
 
     setIsSuccess(true);
     setTimeout(() => {

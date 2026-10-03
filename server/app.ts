@@ -1,6 +1,9 @@
 import express from 'express';
 import authRouter from './auth.js';
+import { assessmentsRouter, checkInsRouter, newsletterRouter } from './community.js';
+import { contentRouter } from './content.js';
 import { couponsRouter } from './coupons.js';
+import { membersRouter } from './members.js';
 import { ordersRouter } from './orders.js';
 import { paymentOptions } from './shop.js';
 import { imagesRouter, productsRouter } from './products.js';
@@ -27,6 +30,11 @@ export function createApiApp() {
   app.use('/api/products', productsRouter);
   app.use('/api/orders', ordersRouter);
   app.use('/api/coupons', couponsRouter);
+  app.use('/api/content', contentRouter);
+  app.use('/api/newsletter', newsletterRouter);
+  app.use('/api/assessments', assessmentsRouter);
+  app.use('/api/checkins', checkInsRouter);
+  app.use('/api/members', membersRouter);
   app.get('/api/config', (_req, res) => res.json(paymentOptions()));
   app.use('/api', (_req, res) => {
     res.status(404).json({ success: false, message: 'Bulunamadı.' });

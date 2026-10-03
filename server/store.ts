@@ -1,4 +1,4 @@
-import type { Coupon, Order, Product, User } from '../src/types/index.js';
+import type { AssessmentForm, CheckIn, Coupon, Order, Product, User } from '../src/types/index.js';
 import { DATABASE_URL } from './config.js';
 
 export interface StoredUser extends User {
@@ -68,6 +68,29 @@ export interface Store {
   removeCoupon(id: string): Promise<boolean>;
   /** Loads starter coupons once per database. */
   seedCoupons(coupons: Coupon[]): Promise<void>;
+
+  /** Site content the owner edits in the admin panel (settings, blog, testimonials...), one JSON document per key. */
+  getContent(key: string): Promise<unknown | undefined>;
+  setContent(key: string, data: unknown): Promise<void>;
+  listContent(): Promise<Record<string, unknown>>;
+
+  /** Returns false when the address was already subscribed. */
+  addSubscriber(email: string): Promise<boolean>;
+  listSubscribers(): Promise<string[]>;
+
+  listUsers(): Promise<StoredUser[]>;
+
+  saveAssessment(a: AssessmentForm): Promise<void>;
+  getAssessment(id: string): Promise<AssessmentForm | undefined>;
+  updateAssessment(id: string, patch: Partial<AssessmentForm>): Promise<AssessmentForm | undefined>;
+  listAssessments(): Promise<AssessmentForm[]>;
+  listAssessmentsFor(userId: string, email: string): Promise<AssessmentForm[]>;
+
+  saveCheckIn(c: CheckIn): Promise<void>;
+  getCheckIn(id: string): Promise<CheckIn | undefined>;
+  updateCheckIn(id: string, patch: Partial<CheckIn>): Promise<CheckIn | undefined>;
+  listCheckIns(): Promise<CheckIn[]>;
+  listCheckInsFor(userId: string): Promise<CheckIn[]>;
 }
 
 export type PlaceOrderResult =

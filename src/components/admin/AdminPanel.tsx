@@ -88,7 +88,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
     transformations,
     toggleTransformationApproval,
     newsletterSubscribers,
-    resetDemoData
+    refreshOrders
   } = useApp();
 
   const { confirm, form, notify } = useDialog();
@@ -211,20 +211,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
             <span>Canlı Mağazaya Dön</span>
           </button>
 
-          <button
-            onClick={async () => {
-              const ok = await confirm({
-                title: 'Demo verilerini sıfırla',
-                message: 'Siparişler, kuponlar, blog yazıları ve site ayarları varsayılan değerlere dönecek. Ürünler, üyeler ve fotoğraflar etkilenmez.',
-                confirmLabel: 'Sıfırla',
-                danger: true
-              });
-              if (ok) resetDemoData();
-            }}
-            className="w-full text-center text-[10px] text-neutral-500 hover:text-neutral-400 py-1"
-          >
-            Demo Verilerini Sıfırla
-          </button>
         </div>
       </aside>
 
@@ -625,9 +611,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
           {/* TAB 4: ORDERS MANAGEMENT */}
           {activeTab === 'orders' && (
             <div className="space-y-6">
-              <h4 className="font-heading uppercase text-xs font-bold text-white tracking-wider">
-                Gelen Siparişler & Kargo Durumları ({orders.length})
-              </h4>
+              <div className="flex items-center justify-between">
+                <h4 className="font-heading uppercase text-xs font-bold text-white tracking-wider">
+                  Gelen Siparişler & Kargo Durumları ({orders.length})
+                </h4>
+                <button
+                  onClick={async () => {
+                    await refreshOrders();
+                    notify('Sipariş listesi güncellendi.', 'success');
+                  }}
+                  className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-[11px] font-semibold rounded"
+                >
+                  Yenile
+                </button>
+              </div>
 
               <div className="bg-[#121212] border border-neutral-800 rounded-2xl overflow-hidden">
                 <table className="w-full text-xs text-left">
@@ -774,7 +771,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
                             fields: [{ name: 'feedback', label: 'Kadir Hoca Notu', type: 'textarea', defaultValue: a.coachFeedback ?? '' }],
                             submitLabel: 'Onayla & Gönder'
                           });
-                          if (v) reviewAssessment(a.id, v.feedback);
+                          if (!v) return;
+                          const res = await reviewAssessment(a.id, v.feedback);
+                          notify(res.success ? 'Geri bildirim öğrenciye iletildi.' : res.message, res.success ? 'success' : 'error');
                         }}
                         className="px-3 py-1 bg-neutral-800 hover:bg-[#FF5A1F] text-white text-[11px] font-bold rounded transition-colors"
                       >
@@ -864,8 +863,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
                                 submitLabel: 'Notu Gönder'
                               });
                               if (v) {
-                                addCoachNotesToCheckIn(target.id, v.note);
-                                notify('Not öğrenci paneline iletildi.', 'success');
+                                const res = await addCoachNotesToCheckIn(target.id, v.note);
+                                notify(res.success ? 'Not öğrenci paneline iletildi.' : res.message, res.success ? 'success' : 'error');
                               }
                             }}
                             className="px-2 py-1 bg-neutral-800 hover:bg-[#FF5A1F] text-white rounded text-[10px] font-bold"
@@ -873,7 +872,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExitAdmin }) => {
                             Not Yaz
                           </button>
                           <button
-                            onClick={() => updateUserStatus(u.id, !u.suspended)}
+                            onClick={async () => {
+                              const res = await updateUserStatus(u.id, !u.suspended);
+                              if (!res.success) notify(res.message, 'error');
+                            }}
                             className="text-neutral-400 hover:text-white text-[11px]"
                           >
                             {u.suspended ? 'Aktifleştir' : 'Askıya Al'}
