@@ -1,30 +1,80 @@
-import React, { useState } from 'react';
-import { X, Lock, Mail, User as UserIcon, Phone, ShieldCheck, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { useApp } from '../../context/AppContext';
+import React, { useEffect, useState } from 'react';
+import { X, Lock, Mail, AlertCircle, CheckCircle2, Loader2, MailCheck } from 'lucide-react';
+import { useApp, AuthTab } from '../../context/AppContext';
 
 interface AuthModalProps {
   onOpenLegal: (page: string) => void;
 }
 
+const passwordChecks = (pw: string) => {
+  const hasMinLength = pw.length >= 8;
+  const hasUpperCase = /[A-Z]/.test(pw);
+  const hasLowerCase = /[a-z]/.test(pw);
+  const hasNumber = /[0-9]/.test(pw);
+  return { score: [hasMinLength, hasUpperCase, hasLowerCase, hasNumber].filter(Boolean).length };
+};
+
+const PasswordMeter: React.FC<{ password: string }> = ({ password }) => {
+  if (!password) return null;
+  const { score } = passwordChecks(password);
+  return (
+    <div className="mt-2 space-y-1">
+      <div className="flex gap-1 h-1">
+        {[1, 2, 3, 4].map((step) => (
+          <div
+            key={step}
+            className={`flex-1 rounded-full ${
+              step <= score
+                ? score >= 4
+                  ? 'bg-emerald-500'
+                  : score === 3
+                  ? 'bg-amber-500'
+                  : 'bg-rose-500'
+                : 'bg-neutral-800'
+            }`}
+          />
+        ))}
+      </div>
+      <div className="flex justify-between text-[10px] text-neutral-500">
+        <span>Güç: {score >= 4 ? 'Güçlü' : score === 3 ? 'Orta' : 'Zayıf'}</span>
+        <span>8+ karakter, büyük/küçük harf, rakam</span>
+      </div>
+    </div>
+  );
+};
+
+/** Shown when the server has no SMTP configured (development only): the e-mail link, so the flow can still be tried. */
+const DevLinkBox: React.FC<{ link: string }> = ({ link }) => (
+  <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-300 space-y-1 text-left">
+    <p className="font-semibold">Geliştirme modu: SMTP ayarlı olmadığı için e-posta gönderilmedi.</p>
+    <a href={link} className="underline break-all">{link}</a>
+  </div>
+);
+
+type ModalTab = AuthTab | 'check-email';
+
 export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
   const {
     authModalOpen,
     authModalTab,
+    authModalOptions,
     closeAuthModal,
-    openAuthModal,
     login,
-    register
+    register,
+    resendVerification,
+    forgotPassword,
+    resetPassword
   } = useApp();
 
   // Mode
-  const [tab, setTab] = useState<'login' | 'register' | 'forgot'>(authModalTab || 'login');
+  const [tab, setTab] = useState<ModalTab>(authModalTab || 'login');
+  const [busy, setBusy] = useState(false);
 
   // Login form
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
-  const [failedAttempts, setFailedAttempts] = useState(0);
-  const [isLocked, setIsLocked] = useState(false);
+  const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
 
   // Register form
   const [regFirstName, setRegFirstName] = useState('');
@@ -37,54 +87,84 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [marketingAccepted, setMarketingAccepted] = useState(true);
 
+  // "Check your inbox" screen after sign-up
+  const [pendingEmail, setPendingEmail] = useState('');
+  const [mailSent, setMailSent] = useState(true);
+  const [devLink, setDevLink] = useState<string | undefined>();
+  const [resendCooldown, setResendCooldown] = useState(0);
+
   // Forgot password form
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotSubmitted, setForgotSubmitted] = useState(false);
 
+  // Reset password form (reached from the e-mailed link)
+  const [resetPass, setResetPass] = useState('');
+  const [resetPassConfirm, setResetPassConfirm] = useState('');
+
   // Status message
   const [statusMsg, setStatusMsg] = useState<{ text: string; error: boolean } | null>(null);
 
+  // Whenever the modal is (re)opened, jump to the requested tab and show any notice (e.g. e-mail verified).
+  useEffect(() => {
+    if (!authModalOpen) return;
+    setTab(authModalTab);
+    setStatusMsg(authModalOptions.notice ?? null);
+    setUnverifiedEmail(null);
+    setForgotSubmitted(false);
+    setDevLink(undefined);
+  }, [authModalOpen, authModalTab, authModalOptions]);
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const id = setTimeout(() => setResendCooldown(c => c - 1), 1000);
+    return () => clearTimeout(id);
+  }, [resendCooldown]);
+
   if (!authModalOpen) return null;
 
-  // Password Strength Calculation
-  const hasMinLength = regPassword.length >= 8;
-  const hasUpperCase = /[A-Z]/.test(regPassword);
-  const hasLowerCase = /[a-z]/.test(regPassword);
-  const hasNumber = /[0-9]/.test(regPassword);
+  const switchTab = (next: ModalTab) => {
+    setTab(next);
+    setStatusMsg(null);
+    setUnverifiedEmail(null);
+  };
+
+  const strengthScore = passwordChecks(regPassword).score;
   const passwordsMatch = regPassword && regPassword === regPasswordConfirm;
 
-  const strengthScore = [hasMinLength, hasUpperCase, hasLowerCase, hasNumber].filter(Boolean).length;
-
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setStatusMsg(null);
-
-    if (isLocked) {
-      setStatusMsg({ text: 'Çok fazla başarısız deneme yapıldı. Lütfen 1 dakika bekleyiniz.', error: true });
-      return;
-    }
-
-    const res = login(loginEmail, loginPassword);
+    setUnverifiedEmail(null);
+    setBusy(true);
+    const res = await login(loginEmail, loginPassword, rememberMe);
+    setBusy(false);
     if (res.success) {
       setStatusMsg({ text: res.message, error: false });
+      setLoginPassword('');
       setTimeout(() => closeAuthModal(), 800);
     } else {
-      const attempts = failedAttempts + 1;
-      setFailedAttempts(attempts);
-      if (attempts >= 4) {
-        setIsLocked(true);
-        setTimeout(() => {
-          setIsLocked(false);
-          setFailedAttempts(0);
-        }, 60000);
-        setStatusMsg({ text: 'Güvenlik kilidi: 4 kez hatalı deneme nedeniyle hesap 60 saniye kilitlendi.', error: true });
-      } else {
-        setStatusMsg({ text: `${res.message} (Kalan deneme hakkı: ${4 - attempts})`, error: true });
-      }
+      setStatusMsg({ text: res.message, error: true });
+      if (res.code === 'EMAIL_NOT_VERIFIED') setUnverifiedEmail(res.email || loginEmail);
     }
   };
 
-  const handleRegisterSubmit = (e: React.FormEvent) => {
+  const handleResend = async (email: string) => {
+    if (resendCooldown > 0) return;
+    setBusy(true);
+    const res = await resendVerification(email);
+    setBusy(false);
+    setPendingEmail(email);
+    setDevLink(res.devLink);
+    setMailSent(!res.success || res.mailSent !== false);
+    setStatusMsg({ text: res.message, error: !res.success });
+    if (res.success) {
+      setResendCooldown(60);
+      setUnverifiedEmail(null);
+      setTab('check-email');
+    }
+  };
+
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setStatusMsg(null);
 
@@ -93,7 +173,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
       return;
     }
 
-    if (strengthScore < 3) {
+    if (strengthScore < 4) {
       setStatusMsg({ text: 'Şifreniz yeterince güçlü değil. Lütfen en az 8 karakter, büyük-küçük harf ve rakam kullanın.', error: true });
       return;
     }
@@ -108,26 +188,71 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
       return;
     }
 
-    const res = register({
+    setBusy(true);
+    const res = await register({
       firstName: regFirstName,
       lastName: regLastName,
       email: regEmail,
-      phone: regPhone,
-      marketingConsent: marketingAccepted
+      phone: regPhone.trim() === '+90' ? '' : regPhone,
+      password: regPassword,
+      marketingConsent: marketingAccepted,
+      kvkkAccepted,
+      termsAccepted
     });
+    setBusy(false);
 
     if (res.success) {
-      setStatusMsg({ text: res.message, error: false });
-      setTimeout(() => closeAuthModal(), 1000);
+      setPendingEmail(res.email || regEmail);
+      setMailSent(res.mailSent !== false);
+      setDevLink(res.devLink);
+      setResendCooldown(60);
+      setRegPassword('');
+      setRegPasswordConfirm('');
+      setLoginEmail(res.email || regEmail);
+      setStatusMsg(null);
+      setTab('check-email');
     } else {
       setStatusMsg({ text: res.message, error: true });
     }
   };
 
-  const handleForgotSubmit = (e: React.FormEvent) => {
+  const handleForgotSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!forgotEmail) return;
-    setForgotSubmitted(true);
+    setStatusMsg(null);
+    setBusy(true);
+    const res = await forgotPassword(forgotEmail);
+    setBusy(false);
+    if (res.success) {
+      setDevLink(res.devLink);
+      setForgotSubmitted(true);
+    } else {
+      setStatusMsg({ text: res.message, error: true });
+    }
+  };
+
+  const handleResetSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setStatusMsg(null);
+    if (passwordChecks(resetPass).score < 4) {
+      setStatusMsg({ text: 'Şifreniz en az 8 karakter olmalı; büyük harf, küçük harf ve rakam içermelidir.', error: true });
+      return;
+    }
+    if (resetPass !== resetPassConfirm) {
+      setStatusMsg({ text: 'Girdiğiniz şifreler birbiriyle eşleşmiyor.', error: true });
+      return;
+    }
+    setBusy(true);
+    const res = await resetPassword(authModalOptions.resetToken || '', resetPass);
+    setBusy(false);
+    if (res.success) {
+      setResetPass('');
+      setResetPassConfirm('');
+      setTab('login');
+      setStatusMsg({ text: res.message, error: false });
+    } else {
+      setStatusMsg({ text: res.message, error: true });
+    }
   };
 
   return (
@@ -148,22 +273,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
         {/* Tab Headers */}
         <div className="flex border-b border-neutral-800 bg-neutral-900/50">
           <button
-            onClick={() => { setTab('login'); setStatusMsg(null); }}
+            onClick={() => switchTab('login')}
             className={`flex-1 py-4 text-xs font-bold uppercase tracking-wider text-center transition-colors relative ${
-              tab === 'login' ? 'text-white' : 'text-neutral-500 hover:text-neutral-300'
+              (tab === 'login' || tab === 'forgot' || tab === 'reset') ? 'text-white' : 'text-neutral-500 hover:text-neutral-300'
             }`}
           >
             Giriş Yap
-            {tab === 'login' && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#FF5A1F]" />}
+            {(tab === 'login' || tab === 'forgot' || tab === 'reset') && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#FF5A1F]" />}
           </button>
           <button
-            onClick={() => { setTab('register'); setStatusMsg(null); }}
+            onClick={() => switchTab('register')}
             className={`flex-1 py-4 text-xs font-bold uppercase tracking-wider text-center transition-colors relative ${
-              tab === 'register' ? 'text-white' : 'text-neutral-500 hover:text-neutral-300'
+              (tab === 'register' || tab === 'check-email') ? 'text-white' : 'text-neutral-500 hover:text-neutral-300'
             }`}
           >
             Kayıt Ol
-            {tab === 'register' && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#FF5A1F]" />}
+            {(tab === 'register' || tab === 'check-email') && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#FF5A1F]" />}
           </button>
         </div>
 
@@ -204,6 +329,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
                   <Lock className="w-4 h-4 text-neutral-500 absolute left-3 top-3" />
                   <input
                     type="password"
+                    autoComplete="current-password"
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
                     placeholder="••••••••"
@@ -226,7 +352,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
 
                 <button
                   type="button"
-                  onClick={() => { setTab('forgot'); setStatusMsg(null); }}
+                  onClick={() => { switchTab('forgot'); setForgotEmail(loginEmail); }}
                   className="text-[#FF5A1F] hover:underline"
                 >
                   Şifremi Unuttum
@@ -235,13 +361,26 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
 
               <button
                 type="submit"
-                disabled={isLocked}
-                className="w-full py-3 bg-[#FF5A1F] hover:bg-[#e04e18] disabled:bg-neutral-800 text-white font-bold text-xs uppercase tracking-wider rounded-lg transition-colors shadow-lg shadow-[#FF5A1F]/20 active:scale-95"
+                disabled={busy}
+                className="w-full py-3 bg-[#FF5A1F] hover:bg-[#e04e18] disabled:bg-neutral-800 text-white font-bold text-xs uppercase tracking-wider rounded-lg transition-colors shadow-lg shadow-[#FF5A1F]/20 active:scale-95 flex items-center justify-center gap-2"
               >
+                {busy && <Loader2 className="w-4 h-4 animate-spin" />}
                 Giriş Yap
               </button>
 
-              {/* Demo Quick Logins */}
+              {unverifiedEmail && (
+                <button
+                  type="button"
+                  disabled={busy || resendCooldown > 0}
+                  onClick={() => handleResend(unverifiedEmail)}
+                  className="w-full py-2.5 border border-[#FF5A1F]/50 text-[#FF5A1F] hover:bg-[#FF5A1F]/10 disabled:opacity-50 text-xs font-semibold rounded-lg transition-colors"
+                >
+                  {resendCooldown > 0 ? `Yeniden gönder (${resendCooldown} sn)` : 'Doğrulama e-postasını tekrar gönder'}
+                </button>
+              )}
+
+              {/* Demo Quick Logins (accounts are only seeded when the server runs in development) */}
+              {import.meta.env.DEV && (
               <div className="pt-4 border-t border-neutral-800 space-y-2 text-center">
                 <p className="text-[11px] text-neutral-500 uppercase tracking-wider font-semibold">
                   Hızlı Demo Girişi:
@@ -269,6 +408,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
                   </button>
                 </div>
               </div>
+              )}
             </form>
           )}
 
@@ -333,31 +473,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
                   required
                 />
 
-                {/* Password strength visual meter */}
-                {regPassword && (
-                  <div className="mt-2 space-y-1">
-                    <div className="flex gap-1 h-1">
-                      {[1, 2, 3, 4].map((step) => (
-                        <div
-                          key={step}
-                          className={`flex-1 rounded-full ${
-                            step <= strengthScore
-                              ? strengthScore >= 3
-                                ? 'bg-emerald-500'
-                                : strengthScore === 2
-                                ? 'bg-amber-500'
-                                : 'bg-rose-500'
-                              : 'bg-neutral-800'
-                          }`}
-                        />
-                      ))}
-                    </div>
-                    <div className="flex justify-between text-[10px] text-neutral-500">
-                      <span>Güç: {strengthScore >= 3 ? 'Güçlü' : strengthScore === 2 ? 'Orta' : 'Zayıf'}</span>
-                      <span>8+ karakter, büyük/küçük harf, rakam</span>
-                    </div>
-                  </div>
-                )}
+                <PasswordMeter password={regPassword} />
               </div>
 
               <div>
@@ -427,11 +543,54 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
 
               <button
                 type="submit"
-                className="w-full py-3 bg-[#FF5A1F] hover:bg-[#e04e18] text-white font-bold text-xs uppercase tracking-wider rounded-lg transition-colors shadow-lg shadow-[#FF5A1F]/20 active:scale-95"
+                disabled={busy}
+                className="w-full py-3 bg-[#FF5A1F] hover:bg-[#e04e18] disabled:bg-neutral-800 text-white font-bold text-xs uppercase tracking-wider rounded-lg transition-colors shadow-lg shadow-[#FF5A1F]/20 active:scale-95 flex items-center justify-center gap-2"
               >
+                {busy && <Loader2 className="w-4 h-4 animate-spin" />}
                 Hesap Oluştur
               </button>
             </form>
+          )}
+
+          {/* TAB: CHECK YOUR INBOX (after sign-up / resend) */}
+          {tab === 'check-email' && (
+            <div className="text-center py-4 space-y-4">
+              <div className="w-12 h-12 rounded-full bg-[#FF5A1F]/15 border border-[#FF5A1F]/30 flex items-center justify-center text-[#FF5A1F] mx-auto">
+                <MailCheck className="w-6 h-6" />
+              </div>
+              <h4 className="font-bold text-white text-sm">E-postanızı Doğrulayın</h4>
+              <p className="text-xs text-neutral-400 leading-relaxed">
+                {mailSent || devLink ? (
+                  <>
+                    <strong className="text-white">{pendingEmail}</strong> adresine bir doğrulama bağlantısı gönderdik.
+                    Hesabınızı etkinleştirmek için bağlantıya tıklayın (24 saat geçerli). Gelmediyse spam klasörünü kontrol edin.
+                  </>
+                ) : (
+                  <>
+                    Hesabınız oluşturuldu ancak <strong className="text-white">{pendingEmail}</strong> adresine e-posta gönderilemedi.
+                    Lütfen aşağıdaki butonla yeniden deneyin.
+                  </>
+                )}
+              </p>
+              {devLink && <DevLinkBox link={devLink} />}
+              <div className="flex gap-2 justify-center">
+                <button
+                  type="button"
+                  disabled={busy || resendCooldown > 0}
+                  onClick={() => handleResend(pendingEmail)}
+                  className="px-4 py-2 border border-neutral-700 text-neutral-200 hover:bg-neutral-800 disabled:opacity-50 text-xs font-semibold rounded"
+                >
+                  {resendCooldown > 0 ? `Tekrar gönder (${resendCooldown} sn)` : 'Tekrar Gönder'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => switchTab('login')}
+                  className="px-4 py-2 bg-neutral-800 text-white text-xs font-semibold rounded hover:bg-neutral-700"
+                >
+                  Giriş Ekranına Dön
+                </button>
+              </div>
+            </div>
           )}
 
           {/* TAB 3: FORGOT PASSWORD */}
@@ -444,10 +603,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
                   </div>
                   <h4 className="font-bold text-white text-sm">Sıfırlama Bağlantısı Gönderildi</h4>
                   <p className="text-xs text-neutral-400 leading-relaxed">
-                    <strong>{forgotEmail}</strong> adresinize 1 saat geçerli tek kullanımlık şifre sıfırlama linki iletilmiştir.
+                    <strong>{forgotEmail}</strong> kayıtlıysa, 1 saat geçerli tek kullanımlık şifre sıfırlama bağlantısı bu adrese iletildi. Gelmediyse spam klasörünü kontrol edin.
                   </p>
+                  {devLink && <DevLinkBox link={devLink} />}
                   <button
-                    onClick={() => { setTab('login'); setForgotSubmitted(false); }}
+                    onClick={() => { switchTab('login'); setForgotSubmitted(false); }}
                     className="px-4 py-2 bg-neutral-800 text-white text-xs font-semibold rounded hover:bg-neutral-700"
                   >
                     Giriş Ekranına Dön
@@ -473,14 +633,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
 
                   <button
                     type="submit"
-                    className="w-full py-3 bg-[#FF5A1F] hover:bg-[#e04e18] text-white font-bold text-xs uppercase tracking-wider rounded-lg transition-colors"
+                    disabled={busy}
+                    className="w-full py-3 bg-[#FF5A1F] hover:bg-[#e04e18] disabled:bg-neutral-800 text-white font-bold text-xs uppercase tracking-wider rounded-lg transition-colors flex items-center justify-center gap-2"
                   >
+                    {busy && <Loader2 className="w-4 h-4 animate-spin" />}
                     Sıfırlama Linki Gönder
                   </button>
 
                   <button
                     type="button"
-                    onClick={() => setTab('login')}
+                    onClick={() => switchTab('login')}
                     className="w-full text-center text-xs text-neutral-400 hover:text-white"
                   >
                     ← Giriş Yap'a Geri Dön
@@ -488,6 +650,65 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onOpenLegal }) => {
                 </form>
               )}
             </div>
+          )}
+
+          {/* TAB: SET A NEW PASSWORD (reached from the e-mailed reset link) */}
+          {tab === 'reset' && (
+            <form onSubmit={handleResetSubmit} className="space-y-4">
+              <p className="text-xs text-neutral-400 leading-relaxed">
+                Hesabınız için yeni bir şifre belirleyin. Şifre değiştiğinde tüm açık oturumlarınız sonlandırılır.
+              </p>
+
+              <div>
+                <label className="text-xs text-neutral-400 mb-1 block">Yeni Şifre</label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-neutral-500 absolute left-3 top-3" />
+                  <input
+                    type="password"
+                    value={resetPass}
+                    onChange={(e) => setResetPass(e.target.value)}
+                    autoComplete="new-password"
+                    placeholder="En az 8 karakter, büyük-küçük harf, rakam"
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg pl-9 pr-3 py-2.5 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-[#FF5A1F]"
+                    required
+                  />
+                </div>
+                <PasswordMeter password={resetPass} />
+              </div>
+
+              <div>
+                <label className="text-xs text-neutral-400 mb-1 block">Yeni Şifre Tekrarı</label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-neutral-500 absolute left-3 top-3" />
+                  <input
+                    type="password"
+                    value={resetPassConfirm}
+                    onChange={(e) => setResetPassConfirm(e.target.value)}
+                    autoComplete="new-password"
+                    placeholder="Şifrenizi tekrar giriniz"
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg pl-9 pr-3 py-2.5 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-[#FF5A1F]"
+                    required
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={busy}
+                className="w-full py-3 bg-[#FF5A1F] hover:bg-[#e04e18] disabled:bg-neutral-800 text-white font-bold text-xs uppercase tracking-wider rounded-lg transition-colors flex items-center justify-center gap-2"
+              >
+                {busy && <Loader2 className="w-4 h-4 animate-spin" />}
+                Şifreyi Güncelle
+              </button>
+
+              <button
+                type="button"
+                onClick={() => switchTab('forgot')}
+                className="w-full text-center text-xs text-neutral-400 hover:text-white"
+              >
+                Bağlantı geçersiz mi? Yeni bağlantı iste
+              </button>
+            </form>
           )}
         </div>
       </div>

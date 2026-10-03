@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import {
   User,
-  Role,
   Product,
   CoachingPackage,
   CartItem,
@@ -29,6 +28,16 @@ import {
   INITIAL_COUPONS,
   INITIAL_ORDERS
 } from '../data/initialData';
+import { authApi, AuthResult } from '../lib/authApi';
+
+export type AuthTab = 'login' | 'register' | 'forgot' | 'reset';
+
+export interface AuthModalOptions {
+  /** Single-use token from a password-reset e-mail link. */
+  resetToken?: string;
+  /** Message shown at the top of the modal, e.g. the result of an e-mail verification. */
+  notice?: { text: string; error: boolean };
+}
 
 interface AppContextType {
   // Localization
@@ -47,13 +56,24 @@ interface AppContextType {
   // Auth & Users
   currentUser: User | null;
   users: User[];
-  login: (email: string, pass: string) => { success: boolean; message: string };
-  register: (userData: Partial<User> & { password?: string }) => { success: boolean; message: string };
+  login: (email: string, pass: string, remember?: boolean) => Promise<AuthResult>;
+  register: (userData: {
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string;
+    password: string;
+    marketingConsent: boolean;
+    kvkkAccepted: boolean;
+    termsAccepted: boolean;
+  }) => Promise<AuthResult>;
   logout: () => void;
-  switchRole: (role: Role) => void;
-  updateProfile: (data: Partial<User>) => void;
+  resendVerification: (email: string) => Promise<AuthResult>;
+  forgotPassword: (email: string) => Promise<AuthResult>;
+  resetPassword: (token: string, password: string) => Promise<AuthResult>;
+  updateProfile: (data: Partial<User>) => Promise<AuthResult>;
   updateUserStatus: (userId: string, suspended: boolean) => void;
-  deleteUser: (userId: string) => void;
+  deleteUser: (userId: string) => Promise<void>;
 
   // Cart
   cart: CartItem[];
@@ -121,8 +141,9 @@ interface AppContextType {
   openSearch: () => void;
   closeSearch: () => void;
   authModalOpen: boolean;
-  authModalTab: 'login' | 'register' | 'forgot';
-  openAuthModal: (tab?: 'login' | 'register' | 'forgot') => void;
+  authModalTab: AuthTab;
+  authModalOptions: AuthModalOptions;
+  openAuthModal: (tab?: AuthTab, options?: AuthModalOptions) => void;
   closeAuthModal: () => void;
   selectedProductDetail: Product | null;
   openProductDetail: (product: Product) => void;
@@ -166,7 +187,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Users & Auth
   const [users, setUsers] = useState<User[]>(() => loadStorage('users', INITIAL_USERS));
-  const [currentUser, setCurrentUser] = useState<User | null>(() => loadStorage('current_user', INITIAL_USERS[0])); // Default logged in as Super Admin for smooth review, or toggleable
+  // The signed-in user comes from the server session (httpOnly cookie), never from localStorage.
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
 
   // Cart
   const [cart, setCart] = useState<CartItem[]>(() => loadStorage('cart', []));
@@ -255,7 +277,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Modals
   const [searchOpen, setSearchOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authModalTab, setAuthModalTab] = useState<'login' | 'register' | 'forgot'>('login');
+  const [authModalTab, setAuthModalTab] = useState<AuthTab>('login');
+  const [authModalOptions, setAuthModalOptions] = useState<AuthModalOptions>({});
   const [selectedProductDetail, setSelectedProductDetail] = useState<Product | null>(null);
   const [assessmentModalOpen, setAssessmentModalOpen] = useState(false);
 
@@ -282,7 +305,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => saveStorage('settings', settings), [settings]);
   useEffect(() => saveStorage('cms_sections', cmsSections), [cmsSections]);
   useEffect(() => saveStorage('users', users), [users]);
-  useEffect(() => saveStorage('current_user', currentUser), [currentUser]);
   useEffect(() => saveStorage('cart', cart), [cart]);
   useEffect(() => saveStorage('applied_coupon', appliedCoupon), [appliedCoupon]);
   useEffect(() => saveStorage('wishlist', wishlist), [wishlist]);
@@ -296,6 +318,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => saveStorage('transformations', transformations), [transformations]);
   useEffect(() => saveStorage('testimonials', testimonials), [testimonials]);
   useEffect(() => saveStorage('newsletter', newsletterSubscribers), [newsletterSubscribers]);
+
+  // Restore the signed-in user from the server session on first load.
+  useEffect(() => {
+    let cancelled = false;
+    authApi.me().then(user => {
+      if (!cancelled && user) adoptUser(user);
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Handle the links in verification (?verify=) and password-reset (?reset=) e-mails.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const verifyToken = params.get('verify');
+    const resetToken = params.get('reset');
+    if (!verifyToken && !resetToken) return;
+
+    // Strip the token from the address bar straight away so it can't be bookmarked or shared by accident.
+    params.delete('verify');
+    params.delete('reset');
+    const qs = params.toString();
+    window.history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : '') + window.location.hash);
+
+    if (resetToken) {
+      openAuthModal('reset', { resetToken });
+    } else if (verifyToken) {
+      authApi.verifyEmail(verifyToken).then(res =>
+        openAuthModal('login', { notice: { text: res.message, error: !res.success } })
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const setLanguage = (lang: Language) => {
     setLanguageState(lang);
@@ -384,77 +439,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
-  // Auth methods
-  const login = (email: string, pass: string) => {
+  // Auth methods (all real work happens on the server; see server/auth.ts)
+
+  /** Keeps the admin panel's local member list in step with the signed-in server account. */
+  const adoptUser = (user: User) => {
+    setCurrentUser(user);
+    setUsers(prev => (prev.some(u => u.id === user.id) ? prev.map(u => (u.id === user.id ? { ...u, ...user } : u)) : [...prev, user]));
+  };
+
+  const login = async (email: string, pass: string, remember = true) => {
     if (!email || !pass) {
       return { success: false, message: 'Lütfen tüm alanları doldurunuz.' };
     }
-    const found = users.find(u => u.email.toLowerCase() === email.toLowerCase());
-    if (!found) {
-      return { success: false, message: 'Bu e-posta adresiyle kayıtlı kullanıcı bulunamadı.' };
-    }
-    if (found.suspended) {
-      return { success: false, message: 'Hesabınız askıya alınmıştır. Lütfen destek ile iletişime geçiniz.' };
-    }
-    setCurrentUser(found);
-    return { success: true, message: `Hoş geldiniz, ${found.firstName}!` };
+    const res = await authApi.login(email, pass, remember);
+    if (res.success && res.user) adoptUser(res.user);
+    return res;
   };
 
-  const register = (userData: Partial<User> & { password?: string }) => {
-    if (!userData.email || !userData.firstName || !userData.lastName) {
-      return { success: false, message: 'Lütfen zorunlu alanları doldurunuz.' };
-    }
-    const exists = users.some(u => u.email.toLowerCase() === userData.email?.toLowerCase());
-    if (exists) {
-      return { success: false, message: 'Bu e-posta adresi zaten kullanımda.' };
-    }
-    const newUser: User = {
-      id: `user-${Date.now()}`,
-      firstName: userData.firstName,
-      lastName: userData.lastName,
-      email: userData.email,
-      phone: userData.phone || '',
-      role: 'USER',
-      createdAt: new Date().toISOString(),
-      emailVerified: true,
-      suspended: false,
-      marketingConsent: userData.marketingConsent ?? false
-    };
-    setUsers(prev => [...prev, newUser]);
-    setCurrentUser(newUser);
-    return { success: true, message: 'Kayıt başarılı! Hesabınız oluşturuldu.' };
-  };
+  // Registration does not sign the user in: they must verify their e-mail address first.
+  const register = (userData: Parameters<AppContextType['register']>[0]) => authApi.register(userData);
+
+  const resendVerification = (email: string) => authApi.resendVerification(email);
+  const forgotPassword = (email: string) => authApi.forgotPassword(email);
+  const resetPassword = (token: string, password: string) => authApi.resetPassword(token, password);
 
   const logout = () => {
     setCurrentUser(null);
+    void authApi.logout();
   };
 
-  const switchRole = (role: Role) => {
-    if (!currentUser) {
-      const demoUser = users.find(u => u.role === role) || {
-        id: `user-${Date.now()}`,
-        firstName: role === 'SUPER_ADMIN' ? 'Kadir (Admin)' : 'Emre (Üye)',
-        lastName: 'Demo',
-        email: role === 'SUPER_ADMIN' ? 'admin@kadirfit.com' : 'uye@kadirfit.com',
-        phone: '+905321234567',
-        role,
-        createdAt: new Date().toISOString(),
-        emailVerified: true,
-        suspended: false
-      };
-      setCurrentUser(demoUser);
-    } else {
-      const updated = { ...currentUser, role };
-      setCurrentUser(updated);
-      setUsers(prev => prev.map(u => u.id === updated.id ? updated : u));
-    }
-  };
-
-  const updateProfile = (data: Partial<User>) => {
-    if (!currentUser) return;
-    const updated = { ...currentUser, ...data };
-    setCurrentUser(updated);
-    setUsers(prev => prev.map(u => u.id === updated.id ? updated : u));
+  const updateProfile = async (data: Partial<User>) => {
+    if (!currentUser) return { success: false, message: 'Oturum açmanız gerekiyor.' };
+    const res = await authApi.updateProfile({
+      firstName: data.firstName,
+      lastName: data.lastName,
+      phone: data.phone,
+      marketingConsent: data.marketingConsent
+    });
+    if (res.success && res.user) adoptUser(res.user);
+    return res;
   };
 
   const updateUserStatus = (userId: string, suspended: boolean) => {
@@ -464,11 +487,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const deleteUser = (userId: string) => {
-    setUsers(prev => prev.filter(u => u.id !== userId));
+  const deleteUser = async (userId: string) => {
     if (currentUser?.id === userId) {
+      const res = await authApi.deleteAccount();
+      if (!res.success) {
+        alert(res.message || 'Hesap silinemedi. Lütfen tekrar deneyin.');
+        return;
+      }
       setCurrentUser(null);
     }
+    setUsers(prev => prev.filter(u => u.id !== userId));
   };
 
   // Cart operations
@@ -670,8 +698,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const openSearch = () => setSearchOpen(true);
   const closeSearch = () => setSearchOpen(false);
 
-  const openAuthModal = (tab: 'login' | 'register' | 'forgot' = 'login') => {
+  const openAuthModal = (tab: AuthTab = 'login', options: AuthModalOptions = {}) => {
     setAuthModalTab(tab);
+    setAuthModalOptions(options);
     setAuthModalOpen(true);
   };
   const closeAuthModal = () => setAuthModalOpen(false);
@@ -693,7 +722,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setTestimonials(INITIAL_TESTIMONIALS);
     setBlogPosts(INITIAL_BLOG_POSTS);
     setCoupons(INITIAL_COUPONS);
-    setCurrentUser(INITIAL_USERS[0]);
     localStorage.clear();
   };
 
@@ -714,7 +742,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         login,
         register,
         logout,
-        switchRole,
+        resendVerification,
+        forgotPassword,
+        resetPassword,
         updateProfile,
         updateUserStatus,
         deleteUser,
@@ -772,6 +802,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         closeSearch,
         authModalOpen,
         authModalTab,
+        authModalOptions,
         openAuthModal,
         closeAuthModal,
         selectedProductDetail,
