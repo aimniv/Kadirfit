@@ -1,5 +1,5 @@
 import nodemailer from 'nodemailer';
-import { APP_URL, SMTP, isProd } from './config';
+import { APP_URL, SMTP, isProd } from './config.js';
 
 const smtpConfigured = Boolean(SMTP.host);
 

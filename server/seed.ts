@@ -1,6 +1,6 @@
-import { SEED_DEMO_USERS, isProd } from './config';
-import { hashPassword } from './security';
-import { findUserByEmail, insertUser, type StoredUser } from './store';
+import { SEED_DEMO_USERS, isProd } from './config.js';
+import { hashPassword } from './security.js';
+import type { Store, StoredUser } from './store.js';
 
 // Same ids/profiles as src/data/initialData.ts so demo orders, assessments and check-ins keep matching.
 const DEMO_USERS: Array<Omit<StoredUser, 'passwordHash' | 'sessionVersion'> & { password: string }> = [
@@ -37,11 +37,11 @@ const DEMO_USERS: Array<Omit<StoredUser, 'passwordHash' | 'sessionVersion'> & { 
   }
 ];
 
-export async function seedUsers(): Promise<void> {
+export async function seedUsers(store: Store): Promise<void> {
   if (SEED_DEMO_USERS) {
     for (const { password, ...profile } of DEMO_USERS) {
-      if (findUserByEmail(profile.email)) continue;
-      insertUser({ ...profile, passwordHash: await hashPassword(password), sessionVersion: 0 });
+      if (await store.findUserByEmail(profile.email)) continue;
+      await store.insertUser({ ...profile, passwordHash: await hashPassword(password), sessionVersion: 0 });
       console.log(`[seed] Demo account created: ${profile.email}`);
     }
   }
@@ -49,8 +49,8 @@ export async function seedUsers(): Promise<void> {
   // Production: bootstrap the first super admin from the environment.
   const adminEmail = process.env.ADMIN_EMAIL;
   const adminPassword = process.env.ADMIN_PASSWORD;
-  if (adminEmail && adminPassword && !findUserByEmail(adminEmail)) {
-    insertUser({
+  if (adminEmail && adminPassword && !(await store.findUserByEmail(adminEmail))) {
+    await store.insertUser({
       id: `user-admin-${Date.now()}`,
       firstName: process.env.ADMIN_FIRST_NAME || 'Kadir',
       lastName: process.env.ADMIN_LAST_NAME || 'Arslan',

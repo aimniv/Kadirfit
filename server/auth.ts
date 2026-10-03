@@ -1,31 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import express, { type Request, type Response, type NextFunction } from 'express';
-import type { User } from '../src/types';
-import { COOKIE_SECURE, isProd } from './config';
-import { sendPasswordResetEmail, sendVerificationEmail, type MailResult } from './mailer';
+import type { User } from '../src/types/index.js';
+import { COOKIE_SECURE, isProd } from './config.js';
+import { sendPasswordResetEmail, sendVerificationEmail, type MailResult } from './mailer.js';
 import {
   checkPasswordPolicy,
   hashPassword,
-  rateBlocked,
-  rateHit,
-  rateReset,
   readSession,
   signSession,
   verifyAgainstDummy,
   verifyPassword
-} from './security';
-import {
-  clearTokens,
-  consumeToken,
-  findUserByEmail,
-  findUserById,
-  insertUser,
-  issueToken,
-  normalizeEmail,
-  removeUser,
-  updateUser,
-  type StoredUser
-} from './store';
+} from './security.js';
+import { getStore, normalizeEmail, type Store, type StoredUser } from './store.js';
 
 const SESSION_COOKIE = 'kf_session';
 const HOUR = 60 * 60 * 1000;
@@ -45,9 +31,11 @@ router.use(express.json({ limit: '10kb' }));
 
 /** Express 4 doesn't catch rejected promises from async handlers; forward them to the error middleware. */
 const wrap =
-  (fn: (req: Request, res: Response) => Promise<unknown>) =>
+  (fn: (req: Request, res: Response, db: Store) => Promise<unknown>) =>
   (req: Request, res: Response, next: NextFunction) => {
-    fn(req, res).catch(next);
+    getStore()
+      .then(db => fn(req, res, db))
+      .catch(next);
   };
 
 // ---- helpers ---------------------------------------------------------------
@@ -82,10 +70,10 @@ function setSessionCookie(res: Response, user: StoredUser, remember: boolean): v
 const clearSessionCookie = (res: Response) =>
   res.clearCookie(SESSION_COOKIE, { httpOnly: true, sameSite: 'lax', secure: COOKIE_SECURE, path: '/' });
 
-function sessionUser(req: Request): StoredUser | null {
+async function sessionUser(req: Request, db: Store): Promise<StoredUser | null> {
   const session = readSession(parseCookies(req.headers.cookie)[SESSION_COOKIE]);
   if (!session) return null;
-  const user = findUserById(session.uid);
+  const user = await db.findUserById(session.uid);
   if (!user || user.sessionVersion !== session.sv || user.suspended) return null;
   return user;
 }
@@ -103,14 +91,14 @@ const waitText = (sec: number) => (sec >= 90 ? `${Math.ceil(sec / 60)} dakika` :
 /** Dev-only: expose the action link when no mail server is configured, so the flow stays testable. */
 const devLinkOf = (mail: MailResult) => (!isProd && mail.devLink ? { devLink: mail.devLink } : {});
 
-async function sendVerification(user: StoredUser): Promise<MailResult> {
-  return sendVerificationEmail(user.email, user.firstName, issueToken(user.id, 'verify', VERIFY_TTL));
+async function sendVerification(db: Store, user: StoredUser): Promise<MailResult> {
+  return sendVerificationEmail(user.email, user.firstName, await db.issueToken(user.id, 'verify', VERIFY_TTL));
 }
 
 // ---- routes ----------------------------------------------------------------
 
-router.post('/register', wrap(async (req, res) => {
-  const ip = rateHit(`register-ip:${clientIp(req)}`, 10, HOUR);
+router.post('/register', wrap(async (req, res, db) => {
+  const ip = await db.rateHit(`register-ip:${clientIp(req)}`, 10, HOUR);
   if (ip.limited) return tooMany(res, ip.retryAfterSec, 'Çok fazla kayıt denemesi. Lütfen daha sonra tekrar deneyin.');
 
   const firstName = str(req.body?.firstName, 60);
@@ -127,7 +115,7 @@ router.post('/register', wrap(async (req, res) => {
   if (req.body?.kvkkAccepted !== true || req.body?.termsAccepted !== true) {
     return fail(res, 400, 'Lütfen KVKK Aydınlatma Metni ve Üyelik Sözleşmesini onaylayınız.');
   }
-  if (findUserByEmail(email)) {
+  if (await db.findUserByEmail(email)) {
     return fail(res, 409, 'Bu e-posta adresi zaten kullanımda. Giriş yapmayı veya şifrenizi sıfırlamayı deneyin.', {
       code: 'EMAIL_TAKEN'
     });
@@ -147,11 +135,12 @@ router.post('/register', wrap(async (req, res) => {
     passwordHash: await hashPassword(password as string),
     sessionVersion: 0
   };
-  // Re-check after the async hash so two parallel requests can't both create the same address.
-  if (findUserByEmail(email)) return fail(res, 409, 'Bu e-posta adresi zaten kullanımda.', { code: 'EMAIL_TAKEN' });
-  insertUser(user);
+  // The unique e-mail index decides races between two parallel sign-ups for the same address.
+  if (!(await db.insertUser(user))) {
+    return fail(res, 409, 'Bu e-posta adresi zaten kullanımda.', { code: 'EMAIL_TAKEN' });
+  }
 
-  const mail = await sendVerification(user);
+  const mail = await sendVerification(db, user);
   res.status(201).json({
     success: true,
     message: 'Kayıt başarılı! Hesabınızı etkinleştirmek için e-posta adresinize gönderilen doğrulama bağlantısına tıklayın.',
@@ -161,22 +150,22 @@ router.post('/register', wrap(async (req, res) => {
   });
 }));
 
-router.post('/verify-email', (req, res) => {
-  const ip = rateHit(`verify-ip:${clientIp(req)}`, 30, HOUR);
+router.post('/verify-email', wrap(async (req, res, db) => {
+  const ip = await db.rateHit(`verify-ip:${clientIp(req)}`, 30, HOUR);
   if (ip.limited) return tooMany(res, ip.retryAfterSec, 'Çok fazla deneme. Lütfen daha sonra tekrar deneyin.');
 
-  const userId = consumeToken(str(req.body?.token, 128), 'verify');
+  const userId = await db.consumeToken(str(req.body?.token, 128), 'verify');
   if (!userId) {
     return fail(res, 400, 'Doğrulama bağlantısı geçersiz veya süresi dolmuş. Giriş yapmayı deneyin; gerekirse yeni bir doğrulama e-postası isteyebilirsiniz.', {
       code: 'INVALID_TOKEN'
     });
   }
-  updateUser(userId, { emailVerified: true });
+  await db.updateUser(userId, { emailVerified: true });
   res.json({ success: true, message: 'E-posta adresiniz doğrulandı! Artık giriş yapabilirsiniz.' });
-});
+}));
 
-router.post('/resend-verification', wrap(async (req, res) => {
-  const ip = rateHit(`resend-ip:${clientIp(req)}`, 10, HOUR);
+router.post('/resend-verification', wrap(async (req, res, db) => {
+  const ip = await db.rateHit(`resend-ip:${clientIp(req)}`, 10, HOUR);
   if (ip.limited) return tooMany(res, ip.retryAfterSec, 'Çok fazla istek. Lütfen daha sonra tekrar deneyin.');
 
   const email = normalizeEmail(str(req.body?.email, 254));
@@ -186,36 +175,36 @@ router.post('/resend-verification', wrap(async (req, res) => {
   };
   if (!EMAIL_RE.test(email)) return fail(res, 400, 'Lütfen geçerli bir e-posta adresi giriniz.');
 
-  const perEmail = rateHit(`resend-email:${email}`, 3, HOUR);
-  const user = findUserByEmail(email);
+  const perEmail = await db.rateHit(`resend-email:${email}`, 3, HOUR);
+  const user = await db.findUserByEmail(email);
   if (perEmail.limited || !user || user.emailVerified) return res.json(generic);
 
-  const mail = await sendVerification(user);
+  const mail = await sendVerification(db, user);
   res.json({ ...generic, ...devLinkOf(mail) });
 }));
 
-router.post('/login', wrap(async (req, res) => {
+router.post('/login', wrap(async (req, res, db) => {
   const email = normalizeEmail(str(req.body?.email, 254));
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
   if (!email || !password) return fail(res, 400, 'Lütfen tüm alanları doldurunuz.');
 
   const emailKey = `login:${email}`;
   const ipKey = `login-ip:${clientIp(req)}`;
-  const blocked = rateBlocked(emailKey, LOGIN_MAX_FAILURES);
-  const ipBlocked = rateBlocked(ipKey, 30);
+  const blocked = await db.rateBlocked(emailKey, LOGIN_MAX_FAILURES);
+  const ipBlocked = await db.rateBlocked(ipKey, 30);
   if (blocked.limited || ipBlocked.limited) {
     const wait = Math.max(blocked.retryAfterSec, ipBlocked.retryAfterSec);
     return tooMany(res, wait, `Çok fazla başarısız deneme. Lütfen ${waitText(wait)} sonra tekrar deneyin.`);
   }
 
-  const user = findUserByEmail(email);
+  const user = await db.findUserByEmail(email);
   let ok = false;
   if (user) ok = await verifyPassword(password, user.passwordHash);
   else await verifyAgainstDummy(password);
 
   if (!user || !ok) {
-    const e = rateHit(emailKey, LOGIN_MAX_FAILURES, LOGIN_WINDOW);
-    rateHit(ipKey, 30, LOGIN_WINDOW);
+    const e = await db.rateHit(emailKey, LOGIN_MAX_FAILURES, LOGIN_WINDOW);
+    await db.rateHit(ipKey, 30, LOGIN_WINDOW);
     if (e.count >= LOGIN_MAX_FAILURES) {
       return tooMany(res, e.retryAfterSec, `Güvenlik kilidi: ${LOGIN_MAX_FAILURES} hatalı deneme nedeniyle giriş ${waitText(e.retryAfterSec)} süreyle kilitlendi.`);
     }
@@ -234,7 +223,7 @@ router.post('/login', wrap(async (req, res) => {
     });
   }
 
-  rateReset(emailKey);
+  await db.rateReset(emailKey);
   setSessionCookie(res, user, req.body?.remember !== false);
   res.json({ success: true, message: `Hoş geldiniz, ${user.firstName}!`, user: toPublicUser(user) });
 }));
@@ -244,14 +233,14 @@ router.post('/logout', (_req, res) => {
   res.json({ success: true });
 });
 
-router.get('/me', (req, res) => {
-  const user = sessionUser(req);
+router.get('/me', wrap(async (req, res, db) => {
+  const user = await sessionUser(req, db);
   if (!user) clearSessionCookie(res);
   res.json({ user: user ? toPublicUser(user) : null });
-});
+}));
 
-router.patch('/me', (req, res) => {
-  const user = sessionUser(req);
+router.patch('/me', wrap(async (req, res, db) => {
+  const user = await sessionUser(req, db);
   if (!user) return fail(res, 401, 'Oturum açmanız gerekiyor.');
 
   const patch: Partial<StoredUser> = {};
@@ -269,20 +258,20 @@ router.patch('/me', (req, res) => {
   }
   if (typeof req.body?.marketingConsent === 'boolean') patch.marketingConsent = req.body.marketingConsent;
 
-  const updated = updateUser(user.id, patch)!;
+  const updated = (await db.updateUser(user.id, patch))!;
   res.json({ success: true, user: toPublicUser(updated) });
-});
+}));
 
-router.delete('/me', (req, res) => {
-  const user = sessionUser(req);
+router.delete('/me', wrap(async (req, res, db) => {
+  const user = await sessionUser(req, db);
   if (!user) return fail(res, 401, 'Oturum açmanız gerekiyor.');
-  removeUser(user.id);
+  await db.removeUser(user.id);
   clearSessionCookie(res);
   res.json({ success: true });
-});
+}));
 
-router.post('/forgot-password', wrap(async (req, res) => {
-  const ip = rateHit(`forgot-ip:${clientIp(req)}`, 10, HOUR);
+router.post('/forgot-password', wrap(async (req, res, db) => {
+  const ip = await db.rateHit(`forgot-ip:${clientIp(req)}`, 10, HOUR);
   if (ip.limited) return tooMany(res, ip.retryAfterSec, 'Çok fazla istek. Lütfen daha sonra tekrar deneyin.');
 
   const email = normalizeEmail(str(req.body?.email, 254));
@@ -293,16 +282,16 @@ router.post('/forgot-password', wrap(async (req, res) => {
     success: true,
     message: 'Bu e-posta adresi kayıtlıysa 1 saat geçerli, tek kullanımlık bir şifre sıfırlama bağlantısı gönderildi.'
   };
-  const perEmail = rateHit(`forgot-email:${email}`, 3, HOUR);
-  const user = findUserByEmail(email);
+  const perEmail = await db.rateHit(`forgot-email:${email}`, 3, HOUR);
+  const user = await db.findUserByEmail(email);
   if (perEmail.limited || !user || user.suspended) return res.json(generic);
 
-  const mail = await sendPasswordResetEmail(user.email, user.firstName, issueToken(user.id, 'reset', RESET_TTL));
+  const mail = await sendPasswordResetEmail(user.email, user.firstName, await db.issueToken(user.id, 'reset', RESET_TTL));
   res.json({ ...generic, ...devLinkOf(mail) });
 }));
 
-router.post('/reset-password', wrap(async (req, res) => {
-  const ip = rateHit(`reset-ip:${clientIp(req)}`, 20, HOUR);
+router.post('/reset-password', wrap(async (req, res, db) => {
+  const ip = await db.rateHit(`reset-ip:${clientIp(req)}`, 20, HOUR);
   if (ip.limited) return tooMany(res, ip.retryAfterSec, 'Çok fazla deneme. Lütfen daha sonra tekrar deneyin.');
 
   const token = str(req.body?.token, 128);
@@ -312,21 +301,21 @@ router.post('/reset-password', wrap(async (req, res) => {
   if (!policy.ok) return fail(res, 400, policy.message!);
 
   const passwordHash = await hashPassword(password as string);
-  const userId = consumeToken(token, 'reset');
-  const user = userId ? findUserById(userId) : undefined;
+  const userId = await db.consumeToken(token, 'reset');
+  const user = userId ? await db.findUserById(userId) : undefined;
   if (!user) {
     return fail(res, 400, 'Şifre sıfırlama bağlantısı geçersiz veya süresi dolmuş. Lütfen yeni bir bağlantı isteyin.', {
       code: 'INVALID_TOKEN'
     });
   }
 
-  updateUser(user.id, {
+  await db.updateUser(user.id, {
     passwordHash,
     sessionVersion: user.sessionVersion + 1, // signs out every existing session
     emailVerified: true // they just proved they control the mailbox
   });
-  clearTokens(user.id, 'verify');
-  rateReset(`login:${user.email.toLowerCase()}`);
+  await db.clearTokens(user.id, 'verify');
+  await db.rateReset(`login:${user.email.toLowerCase()}`);
   clearSessionCookie(res);
   res.json({ success: true, message: 'Şifreniz güncellendi. Yeni şifrenizle giriş yapabilirsiniz.' });
 }));

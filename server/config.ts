@@ -4,8 +4,9 @@ import path from 'node:path';
 export const isProd = process.env.NODE_ENV === 'production';
 export const PORT = Number(process.env.PORT) || 3000;
 
-const rawAppUrl = process.env.APP_URL || '';
-// .env.example ships with a "MY_APP_URL" placeholder; ignore anything that isn't a real URL.
+const vercelUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : '';
+const rawAppUrl = process.env.APP_URL || vercelUrl;
+// .env.example ships with a placeholder; ignore anything that isn't a real URL.
 export const APP_URL = (/^https?:\/\//.test(rawAppUrl) ? rawAppUrl : `http://localhost:${PORT}`).replace(/\/+$/, '');
 export const COOKIE_SECURE = APP_URL.startsWith('https://');
 
@@ -15,6 +16,13 @@ if (isProd && (rawSecret.length < 32 || rawSecret === PLACEHOLDER_SECRET)) {
   throw new Error('AUTH_SECRET must be set to a random string of at least 32 characters in production.');
 }
 export const AUTH_SECRET = rawSecret.length >= 32 ? rawSecret : 'kadirfit-dev-only-secret-do-not-use-in-production';
+
+export const DATABASE_URL = process.env.DATABASE_URL || '';
+/** Set DATABASE_SSL=no-verify only if your provider's certificate chain isn't trusted (e.g. some Supabase poolers). */
+export const DATABASE_SSL_NO_VERIFY = process.env.DATABASE_SSL === 'no-verify';
+if (isProd && !DATABASE_URL) {
+  throw new Error('DATABASE_URL is required in production (Neon / Supabase PostgreSQL connection string).');
+}
 
 export const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(process.cwd(), 'data'));
 

@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { AUTH_SECRET } from './config';
+import { AUTH_SECRET } from './config.js';
 
 const SCRYPT_N = 16384;
 const SCRYPT_R = 8;
@@ -89,43 +89,4 @@ export function checkPasswordPolicy(password: unknown): PasswordCheck {
     return { ok: false, message: 'Şifreniz en az bir büyük harf, bir küçük harf ve bir rakam içermelidir.' };
   }
   return { ok: true };
-}
-
-interface Bucket {
-  count: number;
-  resetAt: number;
-}
-
-const buckets = new Map<string, Bucket>();
-
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, bucket] of buckets) if (bucket.resetAt <= now) buckets.delete(key);
-}, 60_000).unref();
-
-/** Registers one hit; `limited` is true once the count within the window exceeds `limit`. */
-export function rateHit(
-  key: string,
-  limit: number,
-  windowMs: number
-): { limited: boolean; count: number; retryAfterSec: number } {
-  const now = Date.now();
-  let bucket = buckets.get(key);
-  if (!bucket || bucket.resetAt <= now) {
-    bucket = { count: 0, resetAt: now + windowMs };
-    buckets.set(key, bucket);
-  }
-  bucket.count += 1;
-  return { limited: bucket.count > limit, count: bucket.count, retryAfterSec: Math.ceil((bucket.resetAt - now) / 1000) };
-}
-
-/** Read-only check: is the key already over `limit`? */
-export function rateBlocked(key: string, limit: number): { limited: boolean; retryAfterSec: number } {
-  const bucket = buckets.get(key);
-  if (!bucket || bucket.resetAt <= Date.now()) return { limited: false, retryAfterSec: 0 };
-  return { limited: bucket.count >= limit, retryAfterSec: Math.ceil((bucket.resetAt - Date.now()) / 1000) };
-}
-
-export function rateReset(key: string): void {
-  buckets.delete(key);
 }

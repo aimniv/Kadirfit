@@ -101,26 +101,40 @@ Sunucu varsayılan olarak `http://localhost:3000` adresinde çalışacaktır.
 ### E-posta (doğrulama ve şifre sıfırlama)
 `.env.example` dosyasını `.env` olarak kopyalayıp `SMTP_*` ve `MAIL_FROM` değerlerini kendi SMTP sağlayıcınızla (Brevo, Mailgun, Gmail uygulama şifresi, Resend SMTP vb.) doldurun.
 - **SMTP tanımlı değilken (geliştirme)**: e-postalar gönderilmez; bağlantılar sunucu konsoluna yazılır ve arayüzde sarı bir kutuda gösterilir, böylece akış test edilebilir.
-- **Production'da** `AUTH_SECRET` (32+ karakter) ve `APP_URL` zorunludur; SMTP olmadan e-postalar **gönderilemez**.
-- Hesaplar `DATA_DIR` (varsayılan `./data/auth.json`) içinde tutulur. Tek sunucu için uygundur; birden fazla instance veya geçici dosya sistemi (Vercel/Cloud Run) kullanıyorsanız `server/store.ts` dosyasını Postgres gibi kalıcı bir veritabanıyla değiştirin.
+- **Production'da** `DATABASE_URL`, `AUTH_SECRET` (32+ karakter) ve `APP_URL` gereklidir; SMTP olmadan e-postalar **gönderilemez**.
+- `DATABASE_URL` tanımlıysa hesaplar PostgreSQL'de tutulur (production'da **zorunlu**). Tanımlı değilse yerel geliştirmede `./data/auth.json` dosyası kullanılır.
 
 ---
 
 ## ☁️ Vercel + Neon / Supabase Deploy Talimatları
 
-### 1. Veritabanı Kurulumu (Neon veya Supabase)
-1. [Neon.tech](https://neon.tech) veya [Supabase.com](https://supabase.com) üzerinde ücretsiz bir PostgreSQL projesi oluşturun.
-2. Dashboard'dan `DATABASE_URL` bağlantı dizesini kopyalayın (örnek: `postgresql://user:pass@ep-sample-123.neon.tech/kadirfit?sslmode=require`).
+Ön yüz Vite ile statik olarak, API (`/api/auth/*`) ise `api/index.ts` üzerinden Vercel Serverless Function olarak çalışır (`vercel.json` hazırdır). Hesaplar, tek kullanımlık tokenlar ve hız sınırları PostgreSQL'de tutulur; tablolar ilk istekte kendiliğinden oluşturulur (elle migration gerekmez).
 
-### 2. Vercel Dağıtımı
-1. Kodunuzu GitHub reponuza push edin.
-2. [Vercel](https://vercel.com) Dashboard'dan "Add New Project" seçip reponuzu bağlayın.
-3. Framework Preset: **Vite**
-4. Environment Variables bölümüne `.env.example` içindeki anahtarları ekleyin:
-   - `DATABASE_URL`
-   - `AUTH_SECRET`
-   - `IYZICO_API_KEY` (veya `PAYTR_MERCHANT_ID`)
-5. "Deploy" butonuna basın. Projeniz 1-2 dakika içinde dünya çapında CDN üzerinde canlıya geçecektir.
+### 1. Veritabanı (Neon veya Supabase)
+1. [Neon](https://neon.tech) veya [Supabase](https://supabase.com) üzerinde ücretsiz bir PostgreSQL projesi açın.
+2. **Pooled (havuzlu)** bağlantı dizesini kopyalayın. Serverless için bu şarttır:
+   - Neon: connection string'de host adı `-pooler` içerir.
+   - Supabase: Project Settings → Database → *Transaction pooler* (port 6543).
+3. Supabase'de "self-signed certificate" hatası alırsanız ortam değişkeni olarak `DATABASE_SSL=no-verify` ekleyin.
+
+### 2. SMTP (e-posta)
+Doğrulama ve şifre sıfırlama e-postaları için bir SMTP sağlayıcısı gerekir (Brevo, Mailgun, Resend SMTP, Gmail uygulama şifresi...). Gönderen adresin alan adını sağlayıcıda doğrulayın (SPF/DKIM), aksi halde mailler spam'e düşer.
+
+### 3. Vercel
+1. Kodu GitHub'a push edin, [Vercel](https://vercel.com) → *Add New Project* ile reponuzu seçin. Framework **Vite** otomatik algılanır.
+2. *Settings → Environment Variables* bölümüne ekleyin:
+
+| Değişken | Açıklama |
+|---|---|
+| `DATABASE_URL` | Neon/Supabase pooled bağlantı dizesi **(zorunlu)** |
+| `AUTH_SECRET` | 32+ rastgele karakter, `openssl rand -base64 48` **(zorunlu)** |
+| `APP_URL` | Sitenin gerçek adresi, örn. `https://kadirfit.com` (e-posta linkleri bununla üretilir) |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | E-posta gönderimi |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | İlk Süper Admin hesabı (ilk istekte bir kez oluşturulur) |
+
+3. **Deploy**'a basın. İlk girişten sonra güvenlik için `ADMIN_PASSWORD` değişkenini silebilir ve şifreyi "Şifremi Unuttum" ile değiştirebilirsiniz.
+
+> Ön izleme (preview) dağıtımlarında e-posta linkleri `APP_URL` adresine gider; test için preview'da `APP_URL`'i o dağıtımın adresine ayarlayın.
 
 ---
 
