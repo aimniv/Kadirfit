@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { DATABASE_SSL_NO_VERIFY, DATABASE_URL } from './config.js';
 import { randomToken, sha256 } from './security.js';
+import type { Product } from '../src/types/index.js';
 import { normalizeEmail, type RateResult, type Store, type StoredUser, type TokenType } from './store.js';
 
 /**
@@ -27,7 +28,18 @@ const SCHEMA = [
      key text PRIMARY KEY,
      count integer NOT NULL,
      reset_at timestamptz NOT NULL
-   )`
+   )`,
+  `CREATE TABLE IF NOT EXISTS kf_products (
+     id text PRIMARY KEY,
+     data jsonb NOT NULL,
+     created_at timestamptz NOT NULL DEFAULT now()
+   )`,
+  `CREATE TABLE IF NOT EXISTS kf_images (
+     id text PRIMARY KEY,
+     mime text NOT NULL,
+     data bytea NOT NULL
+   )`,
+  `CREATE TABLE IF NOT EXISTS kf_meta (key text PRIMARY KEY)`
 ];
 
 const toUser = (row: { data: StoredUser } | undefined) => row?.data;
@@ -124,5 +136,51 @@ export class PgStore implements Store {
 
   async rateReset(key: string) {
     await this.pool.query('DELETE FROM kf_rate_limits WHERE key = $1', [key]);
+  }
+
+  async listProducts() {
+    const { rows } = await this.pool.query('SELECT data FROM kf_products ORDER BY created_at DESC, id');
+    return rows.map(r => r.data as Product);
+  }
+
+  async getProduct(id: string) {
+    const { rows } = await this.pool.query('SELECT data FROM kf_products WHERE id = $1', [id]);
+    return rows[0]?.data as Product | undefined;
+  }
+
+  async saveProduct(product: Product) {
+    await this.pool.query(
+      `INSERT INTO kf_products (id, data) VALUES ($1, $2)
+       ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data`,
+      [product.id, JSON.stringify(product)]
+    );
+  }
+
+  async removeProduct(id: string) {
+    const { rowCount } = await this.pool.query('DELETE FROM kf_products WHERE id = $1', [id]);
+    return rowCount === 1;
+  }
+
+  async seedProducts(products: Product[]) {
+    // The meta row is claimed atomically, so concurrent cold starts seed only once.
+    const claimed = await this.pool.query("INSERT INTO kf_meta (key) VALUES ('products_seeded') ON CONFLICT DO NOTHING");
+    if (claimed.rowCount !== 1) return;
+    // One shared base time, so the starter catalogue keeps its original order (the list is newest-first).
+    const base = Date.now();
+    for (const [i, product] of products.entries()) {
+      await this.pool.query(
+        'INSERT INTO kf_products (id, data, created_at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+        [product.id, JSON.stringify(product), new Date(base - i * 1000)]
+      );
+    }
+  }
+
+  async saveImage(id: string, mime: string, data: Buffer) {
+    await this.pool.query('INSERT INTO kf_images (id, mime, data) VALUES ($1, $2, $3)', [id, mime, data]);
+  }
+
+  async getImage(id: string) {
+    const { rows } = await this.pool.query('SELECT mime, data FROM kf_images WHERE id = $1', [id]);
+    return rows[0] ? { mime: rows[0].mime as string, data: rows[0].data as Buffer } : undefined;
   }
 }

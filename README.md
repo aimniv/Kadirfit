@@ -59,7 +59,7 @@ Sitedeki tüm içerikler, ürünler, siparişler, öğrenci check-in takipleri v
 - **Rol Tabanlı Güvenlik**: `SUPER_ADMIN`, `ORDER_MANAGER`, `EDITOR`, `USER`. Yetkisiz kullanıcılar erişemez.
 - **Dashboard**: Toplam ciro, sipariş adedi, öğrenci sayısı, kritik stok uyarıları.
 - **CMS Yönetimi**: Ana sayfa metinleri ve bölümlerini açıp kapatma, sıralama değiştirme.
-- **Ürün Yönetimi**: Ekle/düzenle/sil, stok güncelleme, öne çıkarma, CSV dışa aktarma.
+- **Ürün Yönetimi**: Ürün formu ile ekle/düzenle/sil (fiyat, indirim, stok, bedenler/aromalar, **fotoğraf yükleme**), öne çıkarma. Ürünler ve fotoğraflar veritabanında saklanır, tüm ziyaretçilere gösterilir; yalnızca `SUPER_ADMIN` ve `EDITOR` değiştirebilir. İlk çalıştırmada örnek ürün kataloğu bir kez yüklenir.
 - **Sipariş Yönetimi**: Durum güncelleme (Beklemede, Hazırlanıyor, Kargoda, Teslim Edildi, İptal/İade), kargo takip no girişi, iade taleplerini onaylama.
 - **Koçluk Yönetimi**: Paket fiyatları, gelen ön değerlendirme formlarını inceleme ve programa geri bildirim yazma.
 - **Üye Yönetimi**: Üye listesi, durumu askıya alma/aktifleştirme, haftalık check-in'lere antrenör notu ekleme.

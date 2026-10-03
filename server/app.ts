@@ -1,5 +1,6 @@
 import express from 'express';
 import authRouter from './auth.js';
+import { imagesRouter, productsRouter } from './products.js';
 
 /** The API only (no static files, no Vite). Shared by the local server and the Vercel function. */
 export function createApiApp() {
@@ -14,11 +15,13 @@ export function createApiApp() {
     next();
   });
 
+  app.use('/api/images', imagesRouter); // cacheable, so it sits before the no-store default below
   app.use('/api', (_req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');
     next();
   });
   app.use('/api/auth', authRouter);
+  app.use('/api/products', productsRouter);
   app.use('/api', (_req, res) => {
     res.status(404).json({ success: false, message: 'Bulunamadı.' });
   });

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR } from './config.js';
 import { randomToken, sha256 } from './security.js';
+import type { Product } from '../src/types/index.js';
 import { normalizeEmail, type RateResult, type Store, type StoredUser, type TokenType } from './store.js';
 
 /**
@@ -19,20 +20,25 @@ interface StoredToken {
 interface Db {
   users: StoredUser[];
   tokens: StoredToken[];
+  products: Product[];
+  productsSeeded: boolean;
+  images: Record<string, { mime: string; data: string }>;
 }
+
+const emptyDb = (): Db => ({ users: [], tokens: [], products: [], productsSeeded: false, images: {} });
 
 const DB_FILE = path.join(DATA_DIR, 'auth.json');
 
 export class JsonStore implements Store {
-  private db: Db = { users: [], tokens: [] };
+  private db: Db = emptyDb();
   private buckets = new Map<string, { count: number; resetAt: number }>();
 
   async init(): Promise<void> {
     try {
       const parsed = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')) as Partial<Db>;
-      this.db = { users: parsed.users ?? [], tokens: parsed.tokens ?? [] };
+      this.db = { ...emptyDb(), ...parsed };
     } catch {
-      this.db = { users: [], tokens: [] };
+      this.db = emptyDb();
     }
     setInterval(() => {
       const now = Date.now();
@@ -119,5 +125,44 @@ export class JsonStore implements Store {
 
   async rateReset(key: string) {
     this.buckets.delete(key);
+  }
+
+  async listProducts() {
+    return this.db.products;
+  }
+
+  async getProduct(id: string) {
+    return this.db.products.find(p => p.id === id);
+  }
+
+  async saveProduct(product: Product) {
+    const i = this.db.products.findIndex(p => p.id === product.id);
+    if (i >= 0) this.db.products[i] = product;
+    else this.db.products.unshift(product);
+    this.persist();
+  }
+
+  async removeProduct(id: string) {
+    const before = this.db.products.length;
+    this.db.products = this.db.products.filter(p => p.id !== id);
+    this.persist();
+    return this.db.products.length < before;
+  }
+
+  async seedProducts(products: Product[]) {
+    if (this.db.productsSeeded) return;
+    this.db.productsSeeded = true;
+    this.db.products = [...products];
+    this.persist();
+  }
+
+  async saveImage(id: string, mime: string, data: Buffer) {
+    this.db.images[id] = { mime, data: data.toString('base64') };
+    this.persist();
+  }
+
+  async getImage(id: string) {
+    const img = this.db.images[id];
+    return img ? { mime: img.mime, data: Buffer.from(img.data, 'base64') } : undefined;
   }
 }

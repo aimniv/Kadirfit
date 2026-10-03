@@ -70,7 +70,7 @@ function setSessionCookie(res: Response, user: StoredUser, remember: boolean): v
 const clearSessionCookie = (res: Response) =>
   res.clearCookie(SESSION_COOKIE, { httpOnly: true, sameSite: 'lax', secure: COOKIE_SECURE, path: '/' });
 
-async function sessionUser(req: Request, db: Store): Promise<StoredUser | null> {
+export async function sessionUser(req: Request, db: Store): Promise<StoredUser | null> {
   const session = readSession(parseCookies(req.headers.cookie)[SESSION_COOKIE]);
   if (!session) return null;
   const user = await db.findUserById(session.uid);
