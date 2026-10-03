@@ -10,7 +10,7 @@ import {
   FileText
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
-import { Address, Order } from '../../types';
+import { Order } from '../../types';
 
 interface CheckoutPageProps {
   onBackToShop: () => void;
@@ -32,8 +32,10 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     cartTotal,
     appliedCoupon,
     createOrder,
-    settings
+    shopConfig
   } = useApp();
+  const onlyCoaching = cart.length > 0 && cart.every(i => i.isCoachingPackage);
+  const codFee = onlyCoaching ? 0 : 30;
 
   // Customer Contact
   const [firstName, setFirstName] = useState(currentUser?.firstName || '');
@@ -54,15 +56,9 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
   const [taxOffice, setTaxOffice] = useState('');
   const [taxNumber, setTaxNumber] = useState('');
 
-  // Payment Method
-  const [paymentMethod, setPaymentMethod] = useState<'credit_card' | 'bank_transfer' | 'cash_on_delivery'>('credit_card');
-
-  // Card details (simulation)
-  const [cardNumber, setCardNumber] = useState('');
-  const [cardHolder, setCardHolder] = useState('');
-  const [cardExpiry, setCardExpiry] = useState('');
-  const [cardCvv, setCardCvv] = useState('');
-  const [installment, setInstallment] = useState('1');
+  // Payment Method (only the methods the server says the shop can really accept)
+  const [paymentMethod, setPaymentMethod] = useState<'bank_transfer' | 'cash_on_delivery'>(shopConfig.methods[0] ?? 'cash_on_delivery');
+  const activeMethod = shopConfig.methods.includes(paymentMethod) ? paymentMethod : shopConfig.methods[0] ?? 'cash_on_delivery';
 
   // Mandatory Legal Agreements
   const [agreedPreInfo, setAgreedPreInfo] = useState(false);
@@ -77,7 +73,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     'Gaziantep', 'Kocaeli', 'Eskişehir', 'Mersin', 'Kayseri', 'Samsun', 'Trabzon'
   ];
 
-  const handlePlaceOrder = (e: React.FormEvent) => {
+  const handlePlaceOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
 
@@ -96,64 +92,39 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
       return;
     }
 
-    if (paymentMethod === 'credit_card' && (!cardNumber || !cardHolder || !cardExpiry || !cardCvv)) {
-      setFormError('Lütfen kredi kartı bilgilerinizi eksiksiz doldurunuz.');
-      return;
-    }
-
     setIsProcessing(true);
+    // Prices, shipping, discount and stock are all decided by the server; we only send what was chosen.
+    const res = await createOrder({
+      customer: { firstName, lastName, email, phone },
+      shippingAddress: {
+        title: addressTitle,
+        city,
+        district,
+        fullAddress,
+        postalCode,
+        isCorporate,
+        companyName: isCorporate ? companyName : undefined,
+        taxOffice: isCorporate ? taxOffice : undefined,
+        taxNumber: isCorporate ? taxNumber : undefined
+      },
+      items: cart.map(item => ({
+        productId: item.productId,
+        quantity: item.quantity,
+        isCoachingPackage: item.isCoachingPackage,
+        coachingDurationMonths: item.coachingDurationMonths,
+        selectedSize: item.selectedSize,
+        selectedColor: item.selectedColor,
+        selectedFlavor: item.selectedFlavor,
+        selectedWeight: item.selectedWeight
+      })),
+      paymentMethod: activeMethod,
+      couponCode: appliedCoupon?.code,
+      agreed: agreedPreInfo && agreedDistanceSales
+    });
+    setIsProcessing(false);
 
-    const shippingAddress: Address = {
-      id: `addr-${Date.now()}`,
-      title: addressTitle,
-      fullName: `${firstName} ${lastName}`,
-      phone,
-      city,
-      district,
-      fullAddress,
-      postalCode,
-      isCorporate,
-      companyName: isCorporate ? companyName : undefined,
-      taxOffice: isCorporate ? taxOffice : undefined,
-      taxNumber: isCorporate ? taxNumber : undefined
-    };
-
-    setTimeout(() => {
-      const order = createOrder({
-        userId: currentUser?.id,
-        customerName: `${firstName} ${lastName}`,
-        customerEmail: email,
-        customerPhone: phone,
-        shippingAddress,
-        billingAddress: shippingAddress,
-        items: cart.map(item => ({
-          productId: item.productId,
-          title: item.title,
-          quantity: item.quantity,
-          unitPrice: item.price,
-          selectedVariantText: [
-            item.selectedSize ? `Beden: ${item.selectedSize}` : null,
-            item.selectedColor ? `Renk: ${item.selectedColor}` : null,
-            item.selectedFlavor ? `Aroma: ${item.selectedFlavor}` : null,
-            item.selectedWeight ? `Gramaj: ${item.selectedWeight}` : null,
-            item.coachingDurationMonths ? `${item.coachingDurationMonths} Ay Koçluk` : null
-          ].filter(Boolean).join(' • '),
-          image: item.image,
-          isCoaching: item.isCoachingPackage
-        })),
-        subtotal: cartSubtotal,
-        discountAmount: cartDiscount,
-        couponCode: appliedCoupon?.code,
-        shippingFee: cartShippingFee,
-        total: cartTotal,
-        status: 'Hazırlanıyor',
-        paymentMethod,
-        paymentStatus: paymentMethod === 'credit_card' ? 'paid' : 'pending'
-      });
-
-      setIsProcessing(false);
-      onOrderCompleted(order);
-    }, 1200);
+    if (res.success && res.order) onOrderCompleted(res.order);
+    else setFormError(res.message || 'Sipariş oluşturulamadı. Lütfen tekrar deneyin.');
   };
 
   return (
@@ -344,134 +315,56 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
               </h3>
 
               {/* Tabs for payment methods */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod('credit_card')}
-                  className={`p-3.5 rounded-xl border flex flex-col items-center justify-center text-center gap-2 transition-all ${
-                    paymentMethod === 'credit_card'
-                      ? 'bg-[#FF5A1F]/15 border-[#FF5A1F] text-white'
-                      : 'bg-neutral-950 border-neutral-800 text-neutral-400 hover:text-white'
-                  }`}
-                >
-                  <CreditCard className="w-5 h-5 text-[#FF5A1F]" />
-                  <span className="text-xs font-bold">Kredi / Banka Kartı</span>
-                  <span className="text-[10px] text-neutral-400">iyzico / PayTR 3D Secure</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod('bank_transfer')}
-                  className={`p-3.5 rounded-xl border flex flex-col items-center justify-center text-center gap-2 transition-all ${
-                    paymentMethod === 'bank_transfer'
-                      ? 'bg-[#FF5A1F]/15 border-[#FF5A1F] text-white'
-                      : 'bg-neutral-950 border-neutral-800 text-neutral-400 hover:text-white'
-                  }`}
-                >
-                  <Building2 className="w-5 h-5 text-[#FF5A1F]" />
-                  <span className="text-xs font-bold">Havale / EFT</span>
-                  <span className="text-[10px] text-neutral-400">Garanti / Ziraat Bankası</span>
-                </button>
+              <div className={`grid grid-cols-1 gap-3 ${shopConfig.methods.length > 1 ? 'sm:grid-cols-2' : ''}`}>
+                {shopConfig.methods.includes('bank_transfer') && (
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod('bank_transfer')}
+                    className={`p-3.5 rounded-xl border flex flex-col items-center justify-center text-center gap-2 transition-all ${
+                      activeMethod === 'bank_transfer'
+                        ? 'bg-[#FF5A1F]/15 border-[#FF5A1F] text-white'
+                        : 'bg-neutral-950 border-neutral-800 text-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    <Building2 className="w-5 h-5 text-[#FF5A1F]" />
+                    <span className="text-xs font-bold">Havale / EFT</span>
+                    <span className="text-[10px] text-neutral-400">Banka hesabımıza transfer</span>
+                  </button>
+                )}
 
                 <button
                   type="button"
                   onClick={() => setPaymentMethod('cash_on_delivery')}
                   className={`p-3.5 rounded-xl border flex flex-col items-center justify-center text-center gap-2 transition-all ${
-                    paymentMethod === 'cash_on_delivery'
+                    activeMethod === 'cash_on_delivery'
                       ? 'bg-[#FF5A1F]/15 border-[#FF5A1F] text-white'
                       : 'bg-neutral-950 border-neutral-800 text-neutral-400 hover:text-white'
                   }`}
                 >
                   <Truck className="w-5 h-5 text-[#FF5A1F]" />
                   <span className="text-xs font-bold">Kapıda Ödeme</span>
-                  <span className="text-[10px] text-neutral-400">Nakit veya Kart (+30 TL)</span>
+                  <span className="text-[10px] text-neutral-400">Nakit veya Kart{codFee ? ` (+${codFee} TL)` : ''}</span>
                 </button>
               </div>
 
-              {/* Credit card inputs */}
-              {paymentMethod === 'credit_card' && (
-                <div className="pt-2 space-y-3">
-                  <div>
-                    <label className="text-xs text-neutral-400 mb-1 block">Kart Numarası</label>
-                    <input
-                      type="text"
-                      maxLength={19}
-                      value={cardNumber}
-                      onChange={(e) => setCardNumber(e.target.value)}
-                      placeholder="XXXX XXXX XXXX XXXX"
-                      className="w-full bg-neutral-950 border border-neutral-800 rounded-lg p-2.5 text-xs text-white font-mono focus:outline-none focus:border-[#FF5A1F]"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div className="sm:col-span-2">
-                      <label className="text-xs text-neutral-400 mb-1 block">Kart Üzerindeki İsim</label>
-                      <input
-                        type="text"
-                        value={cardHolder}
-                        onChange={(e) => setCardHolder(e.target.value)}
-                        placeholder="AD SOYAD"
-                        className="w-full bg-neutral-950 border border-neutral-800 rounded-lg p-2.5 text-xs text-white uppercase focus:outline-none focus:border-[#FF5A1F]"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-neutral-400 mb-1 block">Son Kullanma (AA/YY)</label>
-                      <input
-                        type="text"
-                        maxLength={5}
-                        value={cardExpiry}
-                        onChange={(e) => setCardExpiry(e.target.value)}
-                        placeholder="12/28"
-                        className="w-full bg-neutral-950 border border-neutral-800 rounded-lg p-2.5 text-xs text-white text-center font-mono focus:outline-none focus:border-[#FF5A1F]"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs text-neutral-400 mb-1 block">CVV / Güvenlik Kodu</label>
-                      <input
-                        type="password"
-                        maxLength={4}
-                        value={cardCvv}
-                        onChange={(e) => setCardCvv(e.target.value)}
-                        placeholder="***"
-                        className="w-full bg-neutral-950 border border-neutral-800 rounded-lg p-2.5 text-xs text-white text-center font-mono focus:outline-none focus:border-[#FF5A1F]"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-neutral-400 mb-1 block">Taksit Seçeneği</label>
-                      <select
-                        value={installment}
-                        onChange={(e) => setInstallment(e.target.value)}
-                        className="w-full bg-neutral-950 border border-neutral-800 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:border-[#FF5A1F]"
-                      >
-                        <option value="1">Tek Çekim - {cartTotal.toLocaleString('tr-TR')} ₺</option>
-                        <option value="3">3 Taksit - {(cartTotal / 3).toFixed(2)} ₺ / ay</option>
-                        <option value="6">6 Taksit - {(cartTotal / 6).toFixed(2)} ₺ / ay</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-              )}
-
               {/* Bank Transfer info */}
-              {paymentMethod === 'bank_transfer' && (
+              {activeMethod === 'bank_transfer' && (
                 <div className="p-4 rounded-xl bg-black border border-neutral-800 text-xs space-y-3">
                   <p className="text-neutral-300">
                     Siparişinizi tamamladıktan sonra lütfen açıklama kısmına <strong>Adınızı ve Sipariş Numaranızı</strong> yazarak aşağıdaki hesaplardan birine tutarı transfer ediniz:
                   </p>
                   <div className="p-3 bg-neutral-900 rounded border border-neutral-800 font-mono text-[11px]">
-                    <p className="text-white font-bold">{settings.bankIbanGaranti}</p>
-                    <p className="text-white font-bold mt-1">{settings.bankIbanZiraat}</p>
+                    {shopConfig.bankTransferDetails.map((line, i) => (
+                      <p key={line} className={`text-white font-bold ${i ? 'mt-1' : ''}`}>{line}</p>
+                    ))}
                   </div>
                 </div>
               )}
 
               {/* Cash on delivery notice */}
-              {paymentMethod === 'cash_on_delivery' && (
+              {activeMethod === 'cash_on_delivery' && (
                 <div className="p-4 rounded-xl bg-black border border-neutral-800 text-xs text-neutral-300">
-                  Kargonuzu teslim alırken kapıda kuryeye <strong>Nakit veya Kredi Kartı</strong> ile ödeme yapabilirsiniz. Kapıda tahsilat hizmet bedeli olarak 30 TL faturanıza yansıtılacaktır.
+                  Kargonuzu teslim alırken kapıda kuryeye <strong>Nakit veya Kredi Kartı</strong> ile ödeme yapabilirsiniz. {codFee ? `Kapıda tahsilat hizmet bedeli olarak ${codFee} TL tutarınıza eklenir.` : ''}
                 </div>
               )}
             </div>
@@ -576,16 +469,16 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                     <span className="text-white">{cartShippingFee} ₺</span>
                   )}
                 </div>
-                {paymentMethod === 'cash_on_delivery' && (
+                {activeMethod === 'cash_on_delivery' && codFee > 0 && (
                   <div className="flex justify-between text-neutral-300">
                     <span>Kapıda Ödeme Hizmet Bedeli</span>
-                    <span>30 ₺</span>
+                    <span>{codFee} ₺</span>
                   </div>
                 )}
                 <div className="flex justify-between text-base font-bold text-white pt-3 border-t border-neutral-800">
                   <span>Toplam Tutar</span>
                   <span className="text-[#FF5A1F] text-xl font-black">
-                    {(cartTotal + (paymentMethod === 'cash_on_delivery' ? 30 : 0)).toLocaleString('tr-TR')} ₺
+                    {(cartTotal + (activeMethod === 'cash_on_delivery' ? codFee : 0)).toLocaleString('tr-TR')} ₺
                   </span>
                 </div>
               </div>
@@ -597,7 +490,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                 className="w-full py-4 bg-[#FF5A1F] hover:bg-[#e04e18] disabled:bg-neutral-800 text-white font-bold text-xs uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-2 shadow-xl shadow-[#FF5A1F]/30 active:scale-95"
               >
                 {isProcessing ? (
-                  <span>Ödeme İşleniyor...</span>
+                  <span>Siparişiniz Alınıyor...</span>
                 ) : (
                   <>
                     <ShieldCheck className="w-4 h-4" />

@@ -24,10 +24,9 @@ import {
   INITIAL_PRODUCTS,
   INITIAL_TRANSFORMATIONS,
   INITIAL_TESTIMONIALS,
-  INITIAL_BLOG_POSTS,
-  INITIAL_COUPONS,
-  INITIAL_ORDERS
+  INITIAL_BLOG_POSTS
 } from '../data/initialData';
+import { ordersApi, couponsApi, fetchShopConfig, ApiResult, PlaceOrderPayload, ShopConfig } from '../lib/shopApi';
 import { authApi, AuthResult } from '../lib/authApi';
 import { productsApi, ProductResult } from '../lib/productsApi';
 import { useDialog } from './DialogContext';
@@ -87,7 +86,7 @@ interface AppContextType {
   updateCartQuantity: (itemId: string, delta: number) => void;
   clearCart: () => void;
   appliedCoupon: Coupon | null;
-  applyCoupon: (code: string) => { success: boolean; message: string };
+  applyCoupon: (code: string) => Promise<{ success: boolean; message: string }>;
   removeCoupon: () => void;
   cartSubtotal: number;
   cartDiscount: number;
@@ -109,9 +108,14 @@ interface AppContextType {
 
   // Orders
   orders: Order[];
-  createOrder: (orderData: Omit<Order, 'id' | 'orderNumber' | 'createdAt'>) => Order;
-  updateOrderStatus: (orderId: string, status: OrderStatus, trackingNo?: string, cargoCompany?: string) => void;
-  requestOrderReturn: (orderId: string, reason: string) => void;
+  /** Payment methods the shop currently accepts, and the bank details to show for transfers. */
+  shopConfig: ShopConfig;
+  /** Sends the order to the server, which prices it and reserves the stock. */
+  createOrder: (payload: PlaceOrderPayload) => Promise<ApiResult & { order?: Order }>;
+  updateOrderStatus: (orderId: string, status: OrderStatus, trackingNo?: string, cargoCompany?: string) => Promise<ApiResult>;
+  updateOrderPayment: (orderId: string, paymentStatus: 'paid' | 'pending') => Promise<ApiResult>;
+  requestOrderReturn: (orderId: string, reason: string) => Promise<ApiResult>;
+  refreshOrders: () => Promise<void>;
 
   // Assessments & Check-ins
   assessments: AssessmentForm[];
@@ -127,8 +131,9 @@ interface AppContextType {
   updateBlogPost: (post: BlogPost) => void;
   deleteBlogPost: (id: string) => void;
   coupons: Coupon[];
-  addCoupon: (coupon: Coupon) => void;
-  deleteCoupon: (id: string) => void;
+  addCoupon: (coupon: { code: string; type: Coupon['type']; value: number; minCartAmount: number }) => Promise<ApiResult>;
+  toggleCoupon: (id: string, isActive: boolean) => Promise<ApiResult>;
+  deleteCoupon: (id: string) => Promise<ApiResult>;
   transformations: TransformationStory[];
   addTransformation: (trans: TransformationStory) => void;
   toggleTransformationApproval: (id: string) => void;
@@ -207,7 +212,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [coachingPackages, setCoachingPackages] = useState<CoachingPackage[]>(() => loadStorage('coaching_packages', INITIAL_COACHING_PACKAGES));
 
   // Orders
-  const [orders, setOrders] = useState<Order[]>(() => loadStorage('orders', INITIAL_ORDERS));
+  // Orders and coupons live on the server; staff see all orders, customers only their own.
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [shopConfig, setShopConfig] = useState<ShopConfig>({ methods: ['cash_on_delivery'], bankTransferDetails: [] });
 
   // Assessments & Check-ins
   const [assessments, setAssessments] = useState<AssessmentForm[]>(() => loadStorage('assessments', [
@@ -273,7 +280,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Blog, Coupons, Transformations, Testimonials, Newsletter
   const [blogPosts, setBlogPosts] = useState<BlogPost[]>(() => loadStorage('blog_posts', INITIAL_BLOG_POSTS));
-  const [coupons, setCoupons] = useState<Coupon[]>(() => loadStorage('coupons', INITIAL_COUPONS));
+  const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [transformations, setTransformations] = useState<TransformationStory[]>(() => loadStorage('transformations', INITIAL_TRANSFORMATIONS));
   const [testimonials, setTestimonials] = useState<Testimonial[]>(() => loadStorage('testimonials', INITIAL_TESTIMONIALS));
   const [newsletterSubscribers, setNewsletterSubscribers] = useState<string[]>(() => loadStorage('newsletter', ['ornek.ogrenci@gmail.com']));
@@ -313,11 +320,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => saveStorage('applied_coupon', appliedCoupon), [appliedCoupon]);
   useEffect(() => saveStorage('wishlist', wishlist), [wishlist]);
   useEffect(() => saveStorage('coaching_packages', coachingPackages), [coachingPackages]);
-  useEffect(() => saveStorage('orders', orders), [orders]);
   useEffect(() => saveStorage('assessments', assessments), [assessments]);
   useEffect(() => saveStorage('checkins', checkIns), [checkIns]);
   useEffect(() => saveStorage('blog_posts', blogPosts), [blogPosts]);
-  useEffect(() => saveStorage('coupons', coupons), [coupons]);
   useEffect(() => saveStorage('transformations', transformations), [transformations]);
   useEffect(() => saveStorage('testimonials', testimonials), [testimonials]);
   useEffect(() => saveStorage('newsletter', newsletterSubscribers), [newsletterSubscribers]);
@@ -331,6 +336,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Payment options (what the shop can really accept today).
+  useEffect(() => {
+    fetchShopConfig().then(cfg => {
+      if (cfg) setShopConfig(cfg);
+    });
+  }, []);
+
+  // Orders and coupons follow the signed-in user; staff get a refresh every minute so new orders show up.
+  useEffect(() => {
+    void refreshOrders();
+    if (!currentUser) {
+      setCoupons([]);
+      return;
+    }
+    couponsApi.list().then(res => {
+      if (res.success && res.coupons) setCoupons(res.coupons);
+    });
+    const staff = currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'ORDER_MANAGER';
+    if (!staff) return;
+    const id = setInterval(() => void refreshOrders(), 60_000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id, currentUser?.role]);
 
   // Load the shared catalogue from the server.
   useEffect(() => {
@@ -554,18 +583,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAppliedCoupon(null);
   };
 
-  const applyCoupon = (code: string) => {
-    const cleanCode = code.trim().toUpperCase();
-    const coupon = coupons.find(c => c.code.toUpperCase() === cleanCode && c.isActive);
-    if (!coupon) {
-      return { success: false, message: 'Geçersiz veya süresi dolmuş kupon kodu.' };
-    }
+  const applyCoupon = async (code: string) => {
+    const clean = code.trim().toUpperCase();
     const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-    if (subtotal < coupon.minCartAmount) {
-      return { success: false, message: `Bu kupon en az ${coupon.minCartAmount} TL sepet tutarında geçerlidir.` };
+    const res = await couponsApi.validate(clean, subtotal);
+    if (!res.success || !res.coupon) {
+      return { success: false, message: res.message || 'Geçersiz veya süresi dolmuş kupon kodu.' };
     }
-    setAppliedCoupon(coupon);
-    return { success: true, message: `"${coupon.code}" kuponu başarıyla uygulandı!` };
+    // Only what the cart needs to preview the discount; the server re-checks everything when the order is placed.
+    setAppliedCoupon({ ...res.coupon, expiresAt: '', usageCount: 0, usageLimit: 0, isActive: true });
+    return { success: true, message: `"${res.coupon.code}" kuponu başarıyla uygulandı!` };
   };
 
   const removeCoupon = () => {
@@ -619,39 +646,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Orders
-  const createOrder = (orderData: Omit<Order, 'id' | 'orderNumber' | 'createdAt'>): Order => {
-    const newOrder: Order = {
-      ...orderData,
-      id: `ord-${Date.now()}`,
-      orderNumber: `KF-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
-      createdAt: new Date().toISOString()
-    };
-    setOrders(prev => [newOrder, ...prev]);
-    clearCart();
-    return newOrder;
+  const refreshOrders = async () => {
+    if (!currentUser) {
+      setOrders([]);
+      return;
+    }
+    const staff = currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'ORDER_MANAGER';
+    const res = await (staff ? ordersApi.listAll() : ordersApi.listMine());
+    if (res.success && res.orders) setOrders(res.orders);
   };
 
-  const updateOrderStatus = (orderId: string, status: OrderStatus, trackingNo?: string, cargoCompany?: string) => {
-    setOrders(prev =>
-      prev.map(o => {
-        if (o.id === orderId) {
-          return {
-            ...o,
-            status,
-            trackingNumber: trackingNo || o.trackingNumber,
-            cargoCompany: cargoCompany || o.cargoCompany,
-            trackingUrl: trackingNo ? `https://kargotakip.ornek.com/?code=${trackingNo}` : o.trackingUrl
-          };
-        }
-        return o;
-      })
-    );
+  const createOrder = async (payload: PlaceOrderPayload) => {
+    const res = await ordersApi.place(payload);
+    if (res.success && res.order) {
+      clearCart();
+      setOrders(prev => [res.order!, ...prev.filter(o => o.id !== res.order!.id)]);
+      void refreshOrders();
+    }
+    return res;
   };
 
-  const requestOrderReturn = (orderId: string, reason: string) => {
-    setOrders(prev =>
-      prev.map(o => o.id === orderId ? { ...o, returnRequested: true, returnReason: reason } : o)
-    );
+  const patchOrder = async (orderId: string, patch: Parameters<typeof ordersApi.update>[1]) => {
+    const res = await ordersApi.update(orderId, patch);
+    if (res.success && res.order) setOrders(prev => prev.map(o => (o.id === orderId ? res.order! : o)));
+    return res;
+  };
+
+  const updateOrderStatus = (orderId: string, status: OrderStatus, trackingNo?: string, cargoCompany?: string) =>
+    patchOrder(orderId, { status, trackingNumber: trackingNo, cargoCompany });
+
+  const updateOrderPayment = (orderId: string, paymentStatus: 'paid' | 'pending') => patchOrder(orderId, { paymentStatus });
+
+  const requestOrderReturn = async (orderId: string, reason: string) => {
+    const res = await ordersApi.requestReturn(orderId, reason);
+    if (res.success && res.order) setOrders(prev => prev.map(o => (o.id === orderId ? res.order! : o)));
+    return res;
   };
 
   // Assessments & Check-ins
@@ -691,8 +720,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateBlogPost = (p: BlogPost) => setBlogPosts(prev => prev.map(item => item.id === p.id ? p : item));
   const deleteBlogPost = (id: string) => setBlogPosts(prev => prev.filter(item => item.id !== id));
 
-  const addCoupon = (c: Coupon) => setCoupons(prev => [c, ...prev]);
-  const deleteCoupon = (id: string) => setCoupons(prev => prev.filter(c => c.id !== id));
+  const addCoupon = async (c: { code: string; type: Coupon['type']; value: number; minCartAmount: number }) => {
+    const res = await couponsApi.create(c);
+    if (res.success && res.coupon) setCoupons(prev => [res.coupon!, ...prev]);
+    return res;
+  };
+  const toggleCoupon = async (id: string, isActive: boolean) => {
+    const res = await couponsApi.update(id, { isActive });
+    if (res.success && res.coupon) setCoupons(prev => prev.map(c => (c.id === id ? res.coupon! : c)));
+    return res;
+  };
+  const deleteCoupon = async (id: string) => {
+    const res = await couponsApi.remove(id);
+    if (res.success) setCoupons(prev => prev.filter(c => c.id !== id));
+    return res;
+  };
 
   const addTransformation = (t: TransformationStory) => setTransformations(prev => [t, ...prev]);
   const toggleTransformationApproval = (id: string) => {
@@ -738,11 +780,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCmsSections(INITIAL_CMS_SECTIONS);
     setUsers(INITIAL_USERS);
     setCoachingPackages(INITIAL_COACHING_PACKAGES);
-    setOrders(INITIAL_ORDERS);
     setTransformations(INITIAL_TRANSFORMATIONS);
     setTestimonials(INITIAL_TESTIMONIALS);
     setBlogPosts(INITIAL_BLOG_POSTS);
-    setCoupons(INITIAL_COUPONS);
     localStorage.clear();
   };
 
@@ -794,9 +834,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         coachingPackages,
         updateCoachingPackage,
         orders,
+        shopConfig,
         createOrder,
         updateOrderStatus,
+        updateOrderPayment,
         requestOrderReturn,
+        refreshOrders,
         assessments,
         submitAssessment,
         reviewAssessment,
@@ -809,6 +852,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteBlogPost,
         coupons,
         addCoupon,
+        toggleCoupon,
         deleteCoupon,
         transformations,
         addTransformation,

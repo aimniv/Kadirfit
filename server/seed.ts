@@ -1,6 +1,6 @@
 import { SEED_DEMO_USERS, isProd } from './config.js';
 import { hashPassword } from './security.js';
-import { INITIAL_PRODUCTS } from '../src/data/initialData.js';
+import { INITIAL_COUPONS, INITIAL_PRODUCTS } from '../src/data/initialData.js';
 import type { Store, StoredUser } from './store.js';
 
 // Same ids/profiles as src/data/initialData.ts so demo orders, assessments and check-ins keep matching.
@@ -74,4 +74,12 @@ export async function seedUsers(store: Store): Promise<void> {
 /** First run only: load the starter catalogue so the shop isn't empty. */
 export async function seedCatalogue(store: Store): Promise<void> {
   await store.seedProducts(INITIAL_PRODUCTS);
+}
+
+/**
+ * First run only. The sample codes come in switched off with a zeroed counter, so a new store never
+ * has public discount codes running until the owner decides to turn them on.
+ */
+export async function seedCoupons(store: Store): Promise<void> {
+  await store.seedCoupons(INITIAL_COUPONS.map(c => ({ ...c, usageCount: 0, isActive: false })));
 }

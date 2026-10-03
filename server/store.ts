@@ -1,4 +1,4 @@
-import type { Product, User } from '../src/types/index.js';
+import type { Coupon, Order, Product, User } from '../src/types/index.js';
 import { DATABASE_URL } from './config.js';
 
 export interface StoredUser extends User {
@@ -45,7 +45,36 @@ export interface Store {
   seedProducts(products: Product[]): Promise<void>;
   saveImage(id: string, mime: string, data: Buffer): Promise<void>;
   getImage(id: string): Promise<{ mime: string; data: Buffer } | undefined>;
+  /** Adds `delta` (may be negative) to a product's stock, never below zero. */
+  adjustStock(productId: string, delta: number): Promise<void>;
+
+  /** Newest first. */
+  listOrders(): Promise<Order[]>;
+  listOrdersForCustomer(userId: string, email: string): Promise<Order[]>;
+  getOrder(id: string): Promise<Order | undefined>;
+  updateOrder(id: string, patch: Partial<Order>): Promise<Order | undefined>;
+  /**
+   * Places an order as one all-or-nothing step: reserves stock, counts the coupon use, saves the order.
+   * Fails (and changes nothing) when stock or the coupon allowance ran out in the meantime.
+   */
+  placeOrder(order: Order, stock: Array<{ productId: string; quantity: number }>, couponId?: string): Promise<PlaceOrderResult>;
+
+  listCoupons(): Promise<Coupon[]>;
+  getCouponByCode(code: string): Promise<Coupon | undefined>;
+  getCoupon(id: string): Promise<Coupon | undefined>;
+  /** Returns false when the code already exists. */
+  insertCoupon(coupon: Coupon): Promise<boolean>;
+  updateCoupon(id: string, patch: Partial<Coupon>): Promise<Coupon | undefined>;
+  removeCoupon(id: string): Promise<boolean>;
+  /** Loads starter coupons once per database. */
+  seedCoupons(coupons: Coupon[]): Promise<void>;
 }
+
+export type PlaceOrderResult =
+  | { ok: true }
+  | { ok: false; reason: 'stock'; productId: string }
+  | { ok: false; reason: 'coupon' }
+  | { ok: false; reason: 'number' };
 
 export const normalizeEmail = (email: string) => email.trim().toLowerCase();
 
@@ -61,6 +90,7 @@ export function getStore(): Promise<Store> {
     const seed = await import('./seed.js');
     await seed.seedUsers(store);
     await seed.seedCatalogue(store);
+    await seed.seedCoupons(store);
     return store;
   })().catch(err => {
     ready = null; // let the next request retry instead of caching a failure

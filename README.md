@@ -32,6 +32,8 @@ Sitedeki tüm içerikler, ürünler, siparişler, öğrenci check-in takipleri v
 - **WhatsApp Butonu**: Sağ altta sabit, özel mesaj şablonlu hızlı iletişim butonu.
 
 ### 3. Mağaza & Ödeme (E-Ticaret)
+> **Durum:** Siparişler ve kuponlar sunucuda (PostgreSQL) tutulur. Fiyat, kargo, indirim ve stok **sunucuda** hesaplanır; tarayıcıdan gelen tutarlara güvenilmez. **Kredi kartı ödemesi şu an kapalıdır** (iyzico/PayTR hesabı ve API anahtarları gerekir); aktif yöntemler Kapıda Ödeme ve (banka bilgisi tanımlıysa) Havale/EFT'tir.
+
 - **Filtreler**: Kategori, alt kategori, maksimum fiyat kaydırıcısı, beden (S, M, L, XL, XXL), aroma, marka ve arama.
 - **Ürün Detay**: Zoom'lu görsel galerisi, varyant seçimi, anlık stok durumu, Beden Ölçü Tablosu, takviyelerde Besin Değerleri Tablosu ve kullanım önerisi, onaylı müşteri değerlendirmeleri.
 - **Yasal Uyarı**: Takviyelerde zorunlu olan *"Takviye edici gıdalar ilaç değildir, hastalıkların önlenmesi veya tedavi edilmesi amacıyla kullanılmaz."* uyarısı.
@@ -131,6 +133,8 @@ Doğrulama ve şifre sıfırlama e-postaları için bir SMTP sağlayıcısı ger
 | `APP_URL` | Sitenin gerçek adresi, örn. `https://kadirfit.com` (e-posta linkleri bununla üretilir) |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | E-posta gönderimi |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | İlk Süper Admin hesabı (ilk istekte bir kez oluşturulur) |
+| `BANK_TRANSFER_DETAILS` | Havale/EFT için **gerçek** banka bilgileriniz, `;` ile ayrılmış. Boşsa Havale seçeneği gizlenir. |
+| `ORDER_NOTIFY_EMAIL` | Her yeni siparişte haber verilecek e-posta (isteğe bağlı) |
 
 3. **Deploy**'a basın. İlk girişten sonra güvenlik için `ADMIN_PASSWORD` değişkenini silebilir ve şifreyi "Şifremi Unuttum" ile değiştirebilirsiniz.
 

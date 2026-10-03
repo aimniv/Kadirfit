@@ -33,12 +33,12 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
   if (!isCartOpen) return null;
 
-  const handleApplyCoupon = (e: React.FormEvent) => {
+  const handleApplyCoupon = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!couponInput) return;
     setCouponError('');
     setCouponSuccess('');
-    const res = applyCoupon(couponInput);
+    const res = await applyCoupon(couponInput);
     if (res.success) {
       setCouponSuccess(res.message);
       setCouponInput('');
@@ -51,7 +51,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   const freeShippingProgress = Math.min(100, (cartSubtotal / settings.freeShippingThreshold) * 100);
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden bg-black/75 backdrop-blur-sm animate-fade-in">
+    <div className="fixed inset-0 z-[55] overflow-hidden bg-black/75 backdrop-blur-sm animate-fade-in">
       <div className="absolute inset-y-0 right-0 max-w-full flex pl-10">
         <div className="w-screen max-w-md bg-[#101010] border-l border-neutral-800 shadow-2xl flex flex-col justify-between">
           
@@ -273,7 +273,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
               <div className="flex items-center justify-center gap-1.5 text-[10px] text-neutral-500">
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-                <span>256-Bit SSL Şifreleme & 3D Secure Güvencesi</span>
+                <span>256-Bit SSL ile Şifreli Bağlantı</span>
               </div>
             </div>
           )}

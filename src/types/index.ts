@@ -163,6 +163,8 @@ export interface Order {
   discountAmount: number;
   couponCode?: string;
   shippingFee: number;
+  /** Cash-on-delivery collection fee, when applicable. */
+  paymentFee?: number;
   total: number;
   status: OrderStatus;
   paymentMethod: 'credit_card' | 'bank_transfer' | 'cash_on_delivery';

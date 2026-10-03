@@ -1,8 +1,8 @@
 import pg from 'pg';
 import { DATABASE_SSL_NO_VERIFY, DATABASE_URL } from './config.js';
 import { randomToken, sha256 } from './security.js';
-import type { Product } from '../src/types/index.js';
-import { normalizeEmail, type RateResult, type Store, type StoredUser, type TokenType } from './store.js';
+import type { Coupon, Order, Product } from '../src/types/index.js';
+import { normalizeEmail, type PlaceOrderResult, type RateResult, type Store, type StoredUser, type TokenType } from './store.js';
 
 /**
  * PostgreSQL store (Neon, Supabase, any Postgres). Tables are created on first use.
@@ -39,7 +39,23 @@ const SCHEMA = [
      mime text NOT NULL,
      data bytea NOT NULL
    )`,
-  `CREATE TABLE IF NOT EXISTS kf_meta (key text PRIMARY KEY)`
+  `CREATE TABLE IF NOT EXISTS kf_meta (key text PRIMARY KEY)`,
+  `CREATE TABLE IF NOT EXISTS kf_orders (
+     id text PRIMARY KEY,
+     order_number text NOT NULL UNIQUE,
+     user_id text,
+     customer_email text NOT NULL,
+     data jsonb NOT NULL,
+     created_at timestamptz NOT NULL DEFAULT now()
+   )`,
+  `CREATE INDEX IF NOT EXISTS kf_orders_user_idx ON kf_orders (user_id)`,
+  `CREATE INDEX IF NOT EXISTS kf_orders_email_idx ON kf_orders (customer_email)`,
+  `CREATE TABLE IF NOT EXISTS kf_coupons (
+     id text PRIMARY KEY,
+     code text NOT NULL UNIQUE,
+     data jsonb NOT NULL,
+     created_at timestamptz NOT NULL DEFAULT now()
+   )`
 ];
 
 const toUser = (row: { data: StoredUser } | undefined) => row?.data;
@@ -182,5 +198,122 @@ export class PgStore implements Store {
   async getImage(id: string) {
     const { rows } = await this.pool.query('SELECT mime, data FROM kf_images WHERE id = $1', [id]);
     return rows[0] ? { mime: rows[0].mime as string, data: rows[0].data as Buffer } : undefined;
+  }
+
+  async adjustStock(productId: string, delta: number) {
+    await this.pool.query(
+      `UPDATE kf_products SET data = jsonb_set(data, '{stock}', to_jsonb(GREATEST(0, (data->>'stock')::int + $2::int))) WHERE id = $1`,
+      [productId, delta]
+    );
+  }
+
+  async listOrders() {
+    const { rows } = await this.pool.query('SELECT data FROM kf_orders ORDER BY created_at DESC');
+    return rows.map(r => r.data as Order);
+  }
+
+  async listOrdersForCustomer(userId: string, email: string) {
+    const { rows } = await this.pool.query(
+      'SELECT data FROM kf_orders WHERE user_id = $1 OR customer_email = $2 ORDER BY created_at DESC',
+      [userId, normalizeEmail(email)]
+    );
+    return rows.map(r => r.data as Order);
+  }
+
+  async getOrder(id: string) {
+    const { rows } = await this.pool.query('SELECT data FROM kf_orders WHERE id = $1', [id]);
+    return rows[0]?.data as Order | undefined;
+  }
+
+  async updateOrder(id: string, patch: Partial<Order>) {
+    const { rows } = await this.pool.query('UPDATE kf_orders SET data = data || $2::jsonb WHERE id = $1 RETURNING data', [
+      id,
+      JSON.stringify(patch)
+    ]);
+    return rows[0]?.data as Order | undefined;
+  }
+
+  async placeOrder(order: Order, stock: Array<{ productId: string; quantity: number }>, couponId?: string): Promise<PlaceOrderResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      // Lock products in a fixed order so two carts with the same items can't deadlock each other.
+      for (const { productId, quantity } of [...stock].sort((a, b) => a.productId.localeCompare(b.productId))) {
+        const r = await client.query(
+          `UPDATE kf_products SET data = jsonb_set(data, '{stock}', to_jsonb((data->>'stock')::int - $2::int))
+           WHERE id = $1 AND (data->>'stock')::int >= $2::int`,
+          [productId, quantity]
+        );
+        if (r.rowCount !== 1) {
+          await client.query('ROLLBACK');
+          return { ok: false, reason: 'stock', productId };
+        }
+      }
+      if (couponId) {
+        const r = await client.query(
+          `UPDATE kf_coupons SET data = jsonb_set(data, '{usageCount}', to_jsonb((data->>'usageCount')::int + 1))
+           WHERE id = $1 AND (data->>'isActive')::boolean AND (data->>'usageCount')::int < (data->>'usageLimit')::int`,
+          [couponId]
+        );
+        if (r.rowCount !== 1) {
+          await client.query('ROLLBACK');
+          return { ok: false, reason: 'coupon' };
+        }
+      }
+      await client.query(
+        'INSERT INTO kf_orders (id, order_number, user_id, customer_email, data) VALUES ($1, $2, $3, $4, $5)',
+        [order.id, order.orderNumber, order.userId ?? null, normalizeEmail(order.customerEmail), JSON.stringify(order)]
+      );
+      await client.query('COMMIT');
+      return { ok: true };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      if ((err as { code?: string }).code === '23505') return { ok: false, reason: 'number' }; // order number collision
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async listCoupons() {
+    const { rows } = await this.pool.query('SELECT data FROM kf_coupons ORDER BY created_at DESC');
+    return rows.map(r => r.data as Coupon);
+  }
+
+  async getCouponByCode(code: string) {
+    const { rows } = await this.pool.query('SELECT data FROM kf_coupons WHERE code = $1', [code.toUpperCase()]);
+    return rows[0]?.data as Coupon | undefined;
+  }
+
+  async getCoupon(id: string) {
+    const { rows } = await this.pool.query('SELECT data FROM kf_coupons WHERE id = $1', [id]);
+    return rows[0]?.data as Coupon | undefined;
+  }
+
+  async insertCoupon(coupon: Coupon) {
+    const { rowCount } = await this.pool.query(
+      'INSERT INTO kf_coupons (id, code, data) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+      [coupon.id, coupon.code.toUpperCase(), JSON.stringify(coupon)]
+    );
+    return rowCount === 1;
+  }
+
+  async updateCoupon(id: string, patch: Partial<Coupon>) {
+    const { rows } = await this.pool.query('UPDATE kf_coupons SET data = data || $2::jsonb WHERE id = $1 RETURNING data', [
+      id,
+      JSON.stringify(patch)
+    ]);
+    return rows[0]?.data as Coupon | undefined;
+  }
+
+  async removeCoupon(id: string) {
+    const { rowCount } = await this.pool.query('DELETE FROM kf_coupons WHERE id = $1', [id]);
+    return rowCount === 1;
+  }
+
+  async seedCoupons(coupons: Coupon[]) {
+    const claimed = await this.pool.query("INSERT INTO kf_meta (key) VALUES ('coupons_seeded') ON CONFLICT DO NOTHING");
+    if (claimed.rowCount !== 1) return;
+    for (const c of coupons) await this.insertCoupon(c);
   }
 }
